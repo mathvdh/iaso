@@ -443,7 +443,7 @@ class EntityDuplicateViewSet(viewsets.GenericViewSet):
 
     def get_queryset(self):
         user_account = self.request.user.iaso_profile.account
-        initial_queryset = EntityDuplicate.objects.filter(entity1__account=user_account, entity2__account=user_account)
+        initial_queryset = EntityDuplicate.objects.all()
         return initial_queryset
 
     @swagger_auto_schema(manual_parameters=[duplicate_detail_entities_param])
