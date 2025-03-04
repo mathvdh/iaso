@@ -6,20 +6,24 @@ The general logic is that we copy a template Spreadsheet file stored in Google S
 and we adapt the value for the particular campaign we are generating to.
 We copy the Regional worksheet for each region in the Campaign scope, then add a column for each district.
 """
+
 import copy
+
 from logging import getLogger
 from typing import Optional
 
 import gspread  # type: ignore
+
 from django.contrib.sites.shortcuts import get_current_site
 from django.utils.translation import gettext_lazy as _
-from gspread.utils import rowcol_to_a1, Dimension, a1_range_to_grid_range  # type: ignore
+from gspread.utils import Dimension, a1_range_to_grid_range, rowcol_to_a1  # type: ignore
 from rest_framework import exceptions
 
 from hat.__version__ import VERSION
 from iaso.models import OrgUnit
-from plugins.polio.models import CountryUsersGroup, Campaign
+from plugins.polio.models import Campaign, CountryUsersGroup
 from plugins.polio.preparedness.client import get_client, get_google_config
+
 
 logger = getLogger(__name__)
 
@@ -170,7 +174,7 @@ def generate_spreadsheet_for_campaign(campaign: Campaign, round_number: Optional
     )
     update_national_worksheet(
         spreadsheet.worksheet("National"),
-        vaccines=campaign.vaccines,
+        vaccines=campaign.vaccines_extended,
         payment_mode=campaign.payment_mode,
         country=campaign.country,
     )

@@ -1,3 +1,10 @@
+import React, {
+    FunctionComponent,
+    useCallback,
+    useEffect,
+    useMemo,
+    useState,
+} from 'react';
 import { Tab, Tabs } from '@mui/material';
 import { makeStyles } from '@mui/styles';
 import {
@@ -7,28 +14,21 @@ import {
     makeFullModal,
     useSafeIntl,
 } from 'bluesquare-components';
-import React, {
-    FunctionComponent,
-    useCallback,
-    useMemo,
-    useState,
-} from 'react';
 
 import { MutateFunction, useQueryClient } from 'react-query';
 
 import { EditIconButton } from '../../../components/Buttons/EditIconButton';
-import { hasFeatureFlag, SHOW_DEV_FEATURES } from '../../../utils/featureFlags';
+import * as Permissions from '../../../utils/permissions';
 import { Profile, useCurrentUser } from '../../../utils/usersUtils';
 import MESSAGES from '../messages';
 import { InitialUserData } from '../types';
 import PermissionsAttribution from './PermissionsAttribution';
 import { useInitialUser } from './useInitialUser';
 import { UserOrgUnitWriteTypes } from './UserOrgUnitWriteTypes';
+import UsersDialogTabDisabled from './UsersDialogTabDisabled';
 import UsersInfos from './UsersInfos';
 import UsersLocations from './UsersLocations';
 import { WarningModal } from './WarningModal/WarningModal';
-import * as Permissions from '../../../utils/permissions';
-import UsersDialogTabDisabled from './UsersDialogTabDisabled';
 
 const useStyles = makeStyles(theme => ({
     tabs: {
@@ -75,9 +75,7 @@ const UserDialogComponent: FunctionComponent<Props> = ({
     const [tab, setTab] = useState('infos');
     const [openWarning, setOpenWarning] = useState<boolean>(false);
     const [hasNoOrgUnitManagementWrite, setHasNoOrgUnitManagementWrite] =
-        useState<boolean>(
-            !user.permissions.value.includes(Permissions.ORG_UNITS),
-        );
+        useState<boolean>(false);
     const saveUser = useCallback(() => {
         const currentUser: any = {};
         Object.keys(user).forEach(key => {
@@ -158,9 +156,25 @@ const UserDialogComponent: FunctionComponent<Props> = ({
         return '';
     }, [formatMessage, isPhoneNumberUpdated, isUserWithoutPermissions]);
 
-    const currentUser = useCurrentUser();
-    const hasDevFeatures = hasFeatureFlag(currentUser, SHOW_DEV_FEATURES);
+    const allUserRolesPermissions = useMemo(
+        () =>
+            user.user_roles_permissions.value.flatMap(role => role.permissions),
+        [user.user_roles_permissions.value],
+    );
 
+    const allUserUserRolesPermissions = useMemo(() => {
+        const allUserPermissions = user.user_permissions.value;
+
+        return [
+            ...new Set([...allUserPermissions, ...allUserRolesPermissions]),
+        ];
+    }, [allUserRolesPermissions, user.user_permissions.value]);
+
+    useEffect(() => {
+        setHasNoOrgUnitManagementWrite(
+            !allUserUserRolesPermissions.includes(Permissions.ORG_UNITS),
+        );
+    }, [allUserRolesPermissions.length, allUserUserRolesPermissions]);
     return (
         <>
             <WarningModal
@@ -221,29 +235,24 @@ const UserDialogComponent: FunctionComponent<Props> = ({
                         value="locations"
                         label={formatMessage(MESSAGES.location)}
                     />
-                    {hasDevFeatures &&
-                        (hasNoOrgUnitManagementWrite ? (
-                            <UsersDialogTabDisabled
-                                label={formatMessage(
-                                    MESSAGES.orgUnitWriteTypes,
-                                )}
-                                disabled
-                                tooltipMessage={formatMessage(
-                                    MESSAGES.OrgUnitTypeWriteDisableTooltip,
-                                    { type: formatMessage(MESSAGES.user) },
-                                )}
-                            />
-                        ) : (
-                            <Tab
-                                classes={{
-                                    root: classes.tab,
-                                }}
-                                value="orgUnitWriteTypes"
-                                label={formatMessage(
-                                    MESSAGES.orgUnitWriteTypes,
-                                )}
-                            />
-                        ))}
+                    {hasNoOrgUnitManagementWrite ? (
+                        <UsersDialogTabDisabled
+                            label={formatMessage(MESSAGES.orgUnitWriteTypes)}
+                            disabled
+                            tooltipMessage={formatMessage(
+                                MESSAGES.OrgUnitTypeWriteDisableTooltip,
+                                { type: formatMessage(MESSAGES.user) },
+                            )}
+                        />
+                    ) : (
+                        <Tab
+                            classes={{
+                                root: classes.tab,
+                            }}
+                            value="orgUnitWriteTypes"
+                            label={formatMessage(MESSAGES.orgUnitWriteTypes)}
+                        />
+                    )}
                 </Tabs>
                 <div className={classes.root} id="user-profile-dialog">
                     <div
@@ -264,11 +273,6 @@ const UserDialogComponent: FunctionComponent<Props> = ({
                             currentUser={user}
                             handleChange={permissions => {
                                 setFieldValue('user_permissions', permissions);
-                                setHasNoOrgUnitManagementWrite(
-                                    !permissions.includes(
-                                        Permissions.ORG_UNITS,
-                                    ),
-                                );
                             }}
                             setFieldValue={(key, value) =>
                                 setFieldValue(key, value)

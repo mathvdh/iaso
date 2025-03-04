@@ -19,13 +19,12 @@ import {
     baseUrls,
 } from '../../constants/urls.ts';
 import { useParamsObject } from '../../routing/hooks/useParamsObject.tsx';
-import { fetchAssociatedOrgUnits } from '../../utils/requests';
 import { useCheckUserHasWritePermissionOnOrgunit } from '../../utils/usersUtils.ts';
 import { FormsTable } from '../forms/components/FormsTable.tsx';
 import { OrgUnitForm } from './components/OrgUnitForm.tsx';
 import { OrgUnitImages } from './components/OrgUnitImages.tsx';
+import { OrgUnitsMapComments } from './components/orgUnitMap/OrgUnitComments/OrgUnitsMapComments';
 import { OrgUnitMap } from './components/orgUnitMap/OrgUnitMap/OrgUnitMap.tsx';
-import { OrgUnitsMapComments } from './components/orgUnitMap/OrgUnitsMapComments';
 import { OrgUnitChildren } from './details/Children/OrgUnitChildren.tsx';
 import { OrgUnitLinks } from './details/Links/OrgUnitLinks.tsx';
 import { Logs } from './history/LogsComponent.tsx';
@@ -37,6 +36,7 @@ import {
     useSaveOrgUnit,
 } from './hooks';
 import MESSAGES from './messages.ts';
+import { fetchAssociatedOrgUnits } from './requests';
 import {
     getAliasesArrayFromString,
     getLinksSources,
@@ -218,7 +218,7 @@ const OrgUnitDetail = () => {
             } = orgUnitRevision.fields;
 
             const coordinates = location
-                ? wktToGeoJSON(location)?.coordinates ?? []
+                ? (wktToGeoJSON(location)?.coordinates ?? [])
                 : [];
             const [longitude, latitude] = coordinates;
             const aliases = revisionAliases
@@ -354,7 +354,6 @@ const OrgUnitDetail = () => {
             }
         }
     }, [originalOrgUnit, links, sources, isNewOrgunit, sourcesSelected]);
-
     return (
         <section className={classes.root}>
             <TopBar title={title} displayBackButton goBack={goBack}>

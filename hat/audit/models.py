@@ -7,6 +7,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.core import serializers
 from django.db import models
 
+
 PROFILE_API = "profile_api"
 PROFILE_API_BULK = "profile_api_bulk"
 PASSWORD_API = "password_api"
@@ -16,6 +17,7 @@ ORG_UNIT_CHANGE_REQUEST = "org_unit_change_request"
 ORG_UNIT_API_BULK = "org_unit_api_bulk"
 GROUP_SET_API = "group_set_api"
 INSTANCE_API = "instance_api"
+INSTANCE_API_BULK = "instance_api_bulk"
 FORM_API = "form_api"
 GPKG_IMPORT = "gpkg_import"
 CAMPAIGN_API = "campaign_api"

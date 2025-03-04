@@ -1,26 +1,31 @@
 import logging
+
 from itertools import groupby
 from operator import itemgetter
 
 from plugins.wfp.common import ETL
 from plugins.wfp.models import *
 
+
 logger = logging.getLogger(__name__)
 
 
 class PBWG:
-    def run(self):
-        entity_type = ETL(["pbwg_1"])
+    def run(self, type):
+        entity_type = ETL([type])
         account = entity_type.account_related_to_entity_type()
         beneficiaries = entity_type.retrieve_entities()
-        logger.info(f"Instances linked to PBWG program: {beneficiaries.count()}")
+        logger.info(f"Instances linked to PBWG program: {beneficiaries.count()} for {account}")
         entities = sorted(list(beneficiaries), key=itemgetter("entity_id"))
         existing_beneficiaries = ETL().existing_beneficiaries()
         instances = self.group_visit_by_entity(entities)
 
+        # Cleaning monthly statistics then update the table with fresh data
+        MonthlyStatistics.objects.all().filter(account=account, programme_type="PLW").delete()
+
         for index, instance in enumerate(instances):
             logger.info(
-                f"---------------------------------------- Beneficiary N° {(index+1)} {instance['entity_id']}-----------------------------------"
+                f"---------------------------------------- Beneficiary N° {(index + 1)} {instance['entity_id']}-----------------------------------"
             )
             instance["journey"] = self.journeyMapper(instance["visits"], ["wfp_coda_pbwg_anthropometric"])
             beneficiary = Beneficiary()
@@ -31,7 +36,7 @@ class PBWG:
                 if instance.get("birth_date") is not None:
                     beneficiary.birth_date = instance["birth_date"]
                     beneficiary.save()
-                    logger.info(f"Created new beneficiary")
+                    logger.info("Created new beneficiary")
             else:
                 beneficiary = Beneficiary.objects.filter(entity_id=instance["entity_id"]).first()
 
@@ -52,7 +57,7 @@ class PBWG:
                 else:
                     logger.info("No new journey")
             logger.info(
-                f"---------------------------------------------------------------------------------------------\n\n"
+                "---------------------------------------------------------------------------------------------\n\n"
             )
 
     def save_journey(self, beneficiary, record):

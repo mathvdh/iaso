@@ -3,10 +3,12 @@ import {
     extractParams,
     extractParamsConfig,
     extractUrls,
+    paginationPathParamsWithPrefix,
 } from '../../../../../hat/assets/js/apps/Iaso/constants/urls';
 import { paginationPathParams } from '../../../../../hat/assets/js/apps/Iaso/routing/common';
 import {
     DESTRUCTION,
+    EARMARKED,
     FORM_A,
     INCIDENT,
     UNUSABLE_VIALS,
@@ -91,12 +93,19 @@ export const polioRouteConfigs: Record<string, RouteConfig> = {
         url: VACCINE_REPOSITORY_BASE_URL,
         params: [
             ...paginationPathParams,
+            ...paginationPathParamsWithPrefix('report'),
             'countries',
             'campaignType',
-            'campaignCategory',
             'file_type',
             'country_block',
+            'vaccine_name',
             'campaignStatus',
+            'tab',
+            'accountId',
+            'reportCountries',
+            'reportCountryBlock',
+            'reportFileType',
+            'reportVaccineName',
         ],
     },
     embeddedCalendar: {
@@ -113,12 +122,18 @@ export const polioRouteConfigs: Record<string, RouteConfig> = {
         url: EMBEDDED_VACCINE_REPOSITORY_URL,
         params: [
             ...paginationPathParams,
+            ...paginationPathParamsWithPrefix('report'),
             'countries',
             'campaignType',
-            'campaignCategory',
             'file_type',
             'country_block',
+            'vaccine_name',
             'campaignStatus',
+            'tab',
+            'reportCountries',
+            'reportCountryBlock',
+            'reportFileType',
+            'reportVaccineName',
         ],
     },
     lqasCountry: {
@@ -225,6 +240,9 @@ export const polioRouteConfigs: Record<string, RouteConfig> = {
             `${UNUSABLE_VIALS}Order`,
             `${UNUSABLE_VIALS}PageSize`,
             `${UNUSABLE_VIALS}Page`,
+            `${EARMARKED}Order`,
+            `${EARMARKED}PageSize`,
+            `${EARMARKED}Page`,
         ],
     },
     stockVariation: {
@@ -242,6 +260,9 @@ export const polioRouteConfigs: Record<string, RouteConfig> = {
             `${INCIDENT}Order`,
             `${INCIDENT}PageSize`,
             `${INCIDENT}Page`,
+            `${EARMARKED}Order`,
+            `${EARMARKED}PageSize`,
+            `${EARMARKED}Page`,
         ],
     },
     countryConfig: {

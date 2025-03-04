@@ -3,11 +3,13 @@ import datetime
 import io
 import json
 import typing
+
 from unittest import mock
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytz
+
 from django.contrib.gis.geos import Point
 from django.core.files import File
 from django.utils import timezone
@@ -15,12 +17,13 @@ from django.utils.timezone import now
 from rest_framework import status
 
 from hat.api.export_utils import timestamp_to_utc_datetime
-from hat.audit.models import Modification, INSTANCE_API
+from hat.audit.models import INSTANCE_API, Modification
 from iaso import models as m
 from iaso.api import query_params as query
 from iaso.models import FormVersion, Instance, InstanceLock
 from iaso.models.microplanning import Planning, Team
 from iaso.test import APITestCase
+
 
 MOCK_DATE = datetime.datetime(2020, 2, 2, 2, 2, 2, tzinfo=pytz.utc)
 
@@ -39,7 +42,11 @@ class InstancesAPITestCase(APITestCase):
         cls.sw_version = sw_version
 
         cls.yoda = cls.create_user_with_profile(
-            username="yoda", last_name="Da", first_name="Yo", account=star_wars, permissions=["iaso_submissions"]
+            username="yoda",
+            last_name="Da",
+            first_name="Yo",
+            account=star_wars,
+            permissions=["iaso_submissions", "iaso_org_units"],
         )
         cls.guest = cls.create_user_with_profile(username="guest", account=star_wars, permissions=["iaso_submissions"])
         cls.supervisor = cls.create_user_with_profile(
@@ -72,10 +79,15 @@ class InstancesAPITestCase(APITestCase):
             version=sw_version,
         )
         cls.jedi_council_endor = m.OrgUnit.objects.create(
-            name="Endor Jedi Council", source_ref="jedi_council_endor_ref"
+            name="Endor Jedi Council",
+            source_ref="jedi_council_endor_ref",
+            version=sw_version,
         )
         cls.jedi_council_endor_region = m.OrgUnit.objects.create(
-            name="Endor Region Jedi Council", parent=cls.jedi_council_endor, source_ref="jedi_council_endor_region_ref"
+            name="Endor Region Jedi Council",
+            parent=cls.jedi_council_endor,
+            source_ref="jedi_council_endor_region_ref",
+            version=sw_version,
         )
 
         cls.project = m.Project.objects.create(
@@ -246,7 +258,7 @@ class InstancesAPITestCase(APITestCase):
         ]
 
         response = self.client.post(
-            f"/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
+            "/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
         )
         self.assertEqual(response.status_code, 200)
 
@@ -292,7 +304,7 @@ class InstancesAPITestCase(APITestCase):
             }
         ]
         response = self.client.post(
-            f"/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
+            "/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
         )
         self.assertEqual(response.status_code, 200)
 
@@ -342,7 +354,7 @@ class InstancesAPITestCase(APITestCase):
             }
         ]
         response = self.client.post(
-            f"/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
+            "/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
         )
         self.assertEqual(response.status_code, 200)
 
@@ -394,7 +406,7 @@ class InstancesAPITestCase(APITestCase):
             }
         ]
         response = self.client.post(
-            f"/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
+            "/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
         )
         self.assertEqual(response.status_code, 200)
 
@@ -447,7 +459,7 @@ class InstancesAPITestCase(APITestCase):
             },
         ]
         response = self.client.post(
-            f"/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
+            "/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
         )
         self.assertEqual(response.status_code, 200)
 
@@ -479,7 +491,7 @@ class InstancesAPITestCase(APITestCase):
             }
         ]
         response = self.client.post(
-            f"/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
+            "/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
         )
         self.assertEqual(response.status_code, 200)
         j = response.json()
@@ -505,12 +517,12 @@ class InstancesAPITestCase(APITestCase):
 
         self.client.force_authenticate(self.yoda)
 
-        response = self.client.get(f"/api/instances/?org_unit_status=VALID")
+        response = self.client.get("/api/instances/?org_unit_status=VALID")
         self.assertJSONResponse(response, 200)
 
         self.assertValidInstanceListData(response.json(), 7)
 
-        response = self.client.get(f"/api/instances/?org_unit_status=REJECTED")
+        response = self.client.get("/api/instances/?org_unit_status=REJECTED")
         self.assertJSONResponse(response, 200)
 
         self.assertValidInstanceListData(response.json(), 0)
@@ -597,7 +609,7 @@ class InstancesAPITestCase(APITestCase):
         audit_before_count = Modification.objects.all().count()
 
         response = self.client.post(
-            f"/api/instances/bulkdelete/",
+            "/api/instances/bulkdelete/",
             {"selected_ids": [str(soft_deleted_instance.id)], "is_deletion": True, "showDeleted": False},
             format="json",
         )
@@ -618,7 +630,7 @@ class InstancesAPITestCase(APITestCase):
 
         # lets restore
         response = self.client.post(
-            f"/api/instances/bulkdelete/",
+            "/api/instances/bulkdelete/",
             {"selected_ids": [str(soft_deleted_instance.id)], "is_deletion": False, "showDeleted": "true"},
             format="json",
         )
@@ -660,7 +672,7 @@ class InstancesAPITestCase(APITestCase):
 
         self.client.force_authenticate(self.yoda)
         json_filters = json.dumps({"and": [{"==": [{"var": "gender"}, "F"]}, {"<": [{"var": "age"}, 25]}]})
-        response = self.client.get(f"/api/instances/", {"jsonContent": json_filters})
+        response = self.client.get("/api/instances/", {"jsonContent": json_filters})
         self.assertJSONResponse(response, 200)
         response_json = response.json()
         self.assertValidInstanceListData(response_json, expected_length=1)
@@ -694,7 +706,7 @@ class InstancesAPITestCase(APITestCase):
 
         self.client.force_authenticate(self.yoda)
         json_filters = json.dumps({"!": {"and": [{"==": [{"var": "gender"}, "F"]}, {"<": [{"var": "age"}, 25]}]}})
-        response = self.client.get(f"/api/instances/", {"jsonContent": json_filters})
+        response = self.client.get("/api/instances/", {"jsonContent": json_filters})
 
         response_json = response.json()
         # We should receive the a and c (+ the instances created in setupTestData), but not the b (because it's a female under 25)
@@ -739,7 +751,7 @@ class InstancesAPITestCase(APITestCase):
             ],
         }
 
-        response = self.client.get(f"/api/instances/", {"jsonContent": json.dumps(filters)})
+        response = self.client.get("/api/instances/", {"jsonContent": json.dumps(filters)})
         self.assertJSONResponse(response, 200)
         response_json = response.json()
         self.assertValidInstanceListData(response_json, expected_length=2)
@@ -751,7 +763,7 @@ class InstancesAPITestCase(APITestCase):
         self.client.force_authenticate(self.yoda)
 
         response = self.client.get(
-            f"/api/instances/", {"form_id": self.form_1.id, "status": m.Instance.STATUS_DUPLICATED}
+            "/api/instances/", {"form_id": self.form_1.id, "status": m.Instance.STATUS_DUPLICATED}
         )
         self.assertJSONResponse(response, 200)
 
@@ -761,7 +773,7 @@ class InstancesAPITestCase(APITestCase):
         """GET /instances/?search=refs:org_unit__source_ref"""
         self.client.force_authenticate(self.yoda)
 
-        response = self.client.get(f"/api/instances/", {"search": "refs:" + self.jedi_council_corruscant.source_ref})
+        response = self.client.get("/api/instances/", {"search": "refs:" + self.jedi_council_corruscant.source_ref})
         self.assertJSONResponse(response, 200)
 
         self.assertValidInstanceListData(response.json(), 7)
@@ -770,7 +782,7 @@ class InstancesAPITestCase(APITestCase):
         """GET /instances/?search=refs:org_unit__source_ref"""
         self.client.force_authenticate(self.yoda)
 
-        response = self.client.get(f"/api/instances/", {"search": "refs:source_ref_not_in"})
+        response = self.client.get("/api/instances/", {"search": "refs:source_ref_not_in"})
         self.assertJSONResponse(response, 200)
 
         self.assertValidInstanceListData(response.json(), 0)
@@ -788,7 +800,7 @@ class InstancesAPITestCase(APITestCase):
             form=form, period="202001", org_unit=self.jedi_council_corruscant, project=self.project
         )
 
-        response = self.client.get(f"/api/instances/", {"form_id": form.id})
+        response = self.client.get("/api/instances/", {"form_id": form.id})
         res = self.assertJSONResponse(response, 200)
         self.assertValidInstanceListData(res, 1)
         self.assertEqual(res["instances"][0]["status"], "READY")
@@ -796,7 +808,7 @@ class InstancesAPITestCase(APITestCase):
         dup = self.create_form_instance(
             form=form, period="202001", org_unit=self.jedi_council_corruscant, project=self.project
         )
-        response = self.client.get(f"/api/instances/", {"form_id": form.id})
+        response = self.client.get("/api/instances/", {"form_id": form.id})
         res = self.assertJSONResponse(response, 200)
         self.assertValidInstanceListData(res, 2)
         self.assertEqual(res["instances"][0]["status"], "DUPLICATED")
@@ -808,9 +820,9 @@ class InstancesAPITestCase(APITestCase):
         self.assertEqual(True, dup.deleted)
         self.assertEqual(1, Modification.objects.count())
         # check status is ready again
-        self.client.get(f"/api/instances/", {"form_id": form.id})
+        self.client.get("/api/instances/", {"form_id": form.id})
 
-        response = self.client.get(f"/api/instances/", {"form_id": form.id})
+        response = self.client.get("/api/instances/", {"form_id": form.id})
         res = self.assertJSONResponse(response, 200)
         self.assertValidInstanceListData(res, 1)
         self.assertEqual(res["instances"][0]["status"], "READY")
@@ -951,7 +963,7 @@ class InstancesAPITestCase(APITestCase):
 
     def test_can_retrieve_instances_in_csv_format(self):
         self.client.force_authenticate(self.yoda)
-        response = self.client.get(f"/api/instances/?format=csv", headers={"Content-Type": "text/csv"})
+        response = self.client.get("/api/instances/?format=csv", headers={"Content-Type": "text/csv"})
         self.assertFileResponse(response, 200, "text/csv; charset=utf-8")
 
     def test_can_retrieve_submissions_list_in_csv_format(self):
@@ -1052,7 +1064,7 @@ class InstancesAPITestCase(APITestCase):
         # Make sure IA-3275 is fixed by sending a 400 instead of letting the backend crash
         self.client.force_authenticate(self.yoda)
         response = self.client.get(
-            f"/api/instances/?limit=20&order=org_unit__name&page=1&showDeleted=false&org_unit_status=VALID&csv=true",
+            "/api/instances/?limit=20&order=org_unit__name&page=1&showDeleted=false&org_unit_status=VALID&csv=true",
             headers={"Content-Type": "text/csv"},
         )
         self.assertJSONResponse(response, status.HTTP_400_BAD_REQUEST)
@@ -1072,7 +1084,7 @@ class InstancesAPITestCase(APITestCase):
         org_unit_without_submissions = m.OrgUnit.objects.create(name="org unit without submissions")
 
         # not restricted yet, can list all instances
-        response = self.client.get(f"/api/instances/")
+        response = self.client.get("/api/instances/")
         self.assertJSONResponse(response, 200)
         self.assertValidInstanceListData(response.json(), 10)
         # restrict user to endor region, can only see one instance. Not instance without org unit
@@ -1083,7 +1095,7 @@ class InstancesAPITestCase(APITestCase):
         restricted.iaso_profile.save()
         self.client.force_authenticate(restricted)
 
-        response = self.client.get(f"/api/instances/")
+        response = self.client.get("/api/instances/")
         self.assertJSONResponse(response, 200)
         self.assertValidInstanceListData(response.json(), 1)
 
@@ -1091,7 +1103,7 @@ class InstancesAPITestCase(APITestCase):
         restricted.iaso_profile.org_units.set([self.jedi_council_endor])
         restricted.iaso_profile.save()
 
-        response = self.client.get(f"/api/instances/")
+        response = self.client.get("/api/instances/")
         self.assertJSONResponse(response, 200)
         self.assertValidInstanceListData(response.json(), 2)
 
@@ -1101,21 +1113,21 @@ class InstancesAPITestCase(APITestCase):
         )
         restricted.iaso_profile.save()
 
-        response = self.client.get(f"/api/instances/")
+        response = self.client.get("/api/instances/")
         self.assertJSONResponse(response, 200)
         self.assertValidInstanceListData(response.json(), 8)
 
         # Check org unit without submissions return empty
         restricted.iaso_profile.org_units.set([org_unit_without_submissions])
 
-        response = self.client.get(f"/api/instances/")
+        response = self.client.get("/api/instances/")
         self.assertJSONResponse(response, 200)
         self.assertValidInstanceListData(response.json(), 0)
 
     @mock.patch("django.utils.timezone.now", lambda: MOCK_DATE)
     def test_stats(self):
         self.client.force_authenticate(self.yoda)
-        response = self.client.get(f"/api/instances/stats/")
+        response = self.client.get("/api/instances/stats/")
         r = self.assertJSONResponse(response, 200)
 
         self.assertEqual(
@@ -1167,7 +1179,7 @@ class InstancesAPITestCase(APITestCase):
     @mock.patch("django.utils.timezone.now", lambda: MOCK_DATE)
     def test_stats_sum(self):
         self.client.force_authenticate(self.yoda)
-        response = self.client.get(f"/api/instances/stats_sum/")
+        response = self.client.get("/api/instances/stats_sum/")
         r = self.assertJSONResponse(response, 200)
 
         self.assertEqual(
@@ -1242,7 +1254,7 @@ class InstancesAPITestCase(APITestCase):
             form=duplicate_form_b, period="202001", org_unit=self.jedi_council_corruscant, project=self.project
         )
         self.client.force_authenticate(self.yoda)
-        response = self.client.get(f"/api/instances/stats/")
+        response = self.client.get("/api/instances/stats/")
         r = self.assertJSONResponse(response, 200)
 
         self.assertEqual(
@@ -1259,7 +1271,7 @@ class InstancesAPITestCase(APITestCase):
                 }
             ],
         )
-        response = self.client.get(f"/api/instances/stats_sum/")
+        response = self.client.get("/api/instances/stats_sum/")
         self.assertJSONResponse(response, 200)
 
     @mock.patch("django.utils.timezone.now", lambda: MOCK_DATE)
@@ -1294,7 +1306,7 @@ class InstancesAPITestCase(APITestCase):
             form=duplicate_form_b, period="202001", org_unit=self.jedi_council_corruscant, project=self.project
         )
         self.client.force_authenticate(self.yoda)
-        response = self.client.get(f"/api/instances/stats/")
+        response = self.client.get("/api/instances/stats/")
         r = self.assertJSONResponse(response, 200)
         self.assertEqual(
             r["data"],
@@ -1311,7 +1323,7 @@ class InstancesAPITestCase(APITestCase):
             ],
         )
 
-        response = self.client.get(f"/api/instances/stats_sum/")
+        response = self.client.get("/api/instances/stats_sum/")
         self.assertJSONResponse(response, 200)
 
     def test_lock_instance(self):
@@ -1335,7 +1347,7 @@ class InstancesAPITestCase(APITestCase):
         response = self.client.get(f"/api/instances/{instance.pk}/")
         j = self.assertJSONResponse(response, 200)
         self.assertEqual(j["is_locked"], True)
-        response = self.client.get(f"/api/instances/?limit=100")
+        response = self.client.get("/api/instances/?limit=100")
         j = self.assertJSONResponse(response, 200)
 
         json_instance = list(filter(lambda x: x["id"] == instance.id, j["instances"]))[0]
@@ -1392,13 +1404,13 @@ class InstancesAPITestCase(APITestCase):
         # Bob cannot remove Alice's lock
         self.client.force_authenticate(bob)
         response = self.client.post(
-            f"/api/instances/unlock_lock/", {"lock": instance.instancelock_set.get(locked_by=alice).id}, json=True
+            "/api/instances/unlock_lock/", {"lock": instance.instancelock_set.get(locked_by=alice).id}, json=True
         )
         self.assertJSONResponse(response, 403)
         # Alice remove her lock
         self.client.force_authenticate(alice)
         response = self.client.post(
-            f"/api/instances/unlock_lock/", {"lock": instance.instancelock_set.get(locked_by=alice).id}, json=True
+            "/api/instances/unlock_lock/", {"lock": instance.instancelock_set.get(locked_by=alice).id}, json=True
         )
         self.assertJSONResponse(response, 200)
         self._check_via_api(instance, alice, can_user_modify=True, is_locked=True)
@@ -1408,7 +1420,7 @@ class InstancesAPITestCase(APITestCase):
         # Alice remove Bob's lock. No active lock, anyone can modify
         self.client.force_authenticate(alice)
         response = self.client.post(
-            f"/api/instances/unlock_lock/", {"lock": instance.instancelock_set.get(locked_by=bob).id}, json=True
+            "/api/instances/unlock_lock/", {"lock": instance.instancelock_set.get(locked_by=bob).id}, json=True
         )
         self.assertJSONResponse(response, 200)
         self._check_via_api(instance, alice, can_user_modify=True, is_locked=False)
@@ -1418,7 +1430,7 @@ class InstancesAPITestCase(APITestCase):
         # Error if trying to unlock a lock already unlocked
         self.client.force_authenticate(alice)
         response = self.client.post(
-            f"/api/instances/unlock_lock/", {"lock": instance.instancelock_set.get(locked_by=bob).id}, json=True
+            "/api/instances/unlock_lock/", {"lock": instance.instancelock_set.get(locked_by=bob).id}, json=True
         )
         self.assertJSONResponse(response, 400)
         # Chris add lock. Anyone can modify
@@ -1443,7 +1455,7 @@ class InstancesAPITestCase(APITestCase):
         self.assertFalse(json["is_reference_instance"])
         self.assertGreaterEqual(len(json["instance_locks"]), 1 if is_locked else 0, json["instance_locks"])
         # check from list view
-        response = self.client.get(f"/api/instances/?limit=100")
+        response = self.client.get("/api/instances/?limit=100")
         j = self.assertJSONResponse(response, 200)
         json_instance = list(filter(lambda x: x["id"] == instance.id, j["instances"]))[0]
         self.assertEqual(json_instance["is_locked"], is_locked)
@@ -1484,7 +1496,7 @@ class InstancesAPITestCase(APITestCase):
             },
         ]
         response = self.client.post(
-            f"/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
+            "/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
         )
         self.assertEqual(response.status_code, 200)
 
@@ -1529,7 +1541,7 @@ class InstancesAPITestCase(APITestCase):
             },
         ]
         response = self.client.post(
-            f"/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
+            "/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
         )
         self.assertEqual(response.status_code, 200)
 
@@ -1568,7 +1580,7 @@ class InstancesAPITestCase(APITestCase):
             },
         ]
         response = self.client.post(
-            f"/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
+            "/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
         )
         self.assertEqual(response.status_code, 200)
 
@@ -1603,7 +1615,7 @@ class InstancesAPITestCase(APITestCase):
             },
         ]
         response = self.client.post(
-            f"/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
+            "/api/instances/?app_id=stars.empire.agriculture.hydroponics", data=body, format="json"
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1661,17 +1673,29 @@ class InstancesAPITestCase(APITestCase):
         response = self.client.get(
             "/api/instances/", {"planningIds": planning_1.id}, headers={"Content-Type": "application/json"}
         )
-        self.assertJSONResponse(response, 200)
-        self.assertValidInstanceListData(response.json(), 1)
-        self.assertEqual(response.json()["instances"][0]["id"], instance_1.id)
+
+        self.assertInstanceListContainsStrictly(response, [instance_1])
+
         # it should return all of the instances
         self.client.force_authenticate(self.yoda)
         response = self.client.get("/api/instances/?order=-id", headers={"Content-Type": "application/json"})
-        self.assertJSONResponse(response, 200)
-        self.assertValidInstanceListData(response.json(), 9)
 
-        self.assertEqual(response.json()["instances"][0]["id"], instance_2.id)
-        self.assertEqual(response.json()["instances"][1]["id"], instance_1.id)
+        self.assertInstanceListContainsStrictly(
+            response,
+            [  # the one specific to this test
+                instance_1,
+                instance_2,
+                # the one from setup
+                self.instance_1,
+                self.instance_2,
+                self.instance_3,
+                self.instance_4,
+                self.instance_5,
+                self.instance_6,
+                self.instance_8,
+            ],
+        )
+
         # it should return none of the instances
         self.client.force_authenticate(self.yoda)
         response = self.client.get(
@@ -1687,12 +1711,10 @@ class InstancesAPITestCase(APITestCase):
             {query.USER_IDS: self.yoda.id},
             headers={"Content-Type": "application/json"},
         )
-        self.assertEqual(response_yoda.status_code, 200)
-        self.assertValidInstanceListData(response_yoda.json(), 4)
-        instances = response_yoda.json()["instances"]
-        self.assertEqual(self.instance_1.id, instances[0].get("id"))
-        self.assertEqual(self.instance_4.id, instances[1].get("id"))
-        self.assertEqual(self.instance_5.id, instances[3].get("id"))
+
+        self.assertInstanceListContainsStrictly(
+            response_yoda, [self.instance_1, self.instance_4, self.instance_5, self.instance_8]
+        )
 
         self.client.force_authenticate(self.yoda)
         response_yoda_deleted = self.client.get(
@@ -1700,45 +1722,61 @@ class InstancesAPITestCase(APITestCase):
             {query.USER_IDS: self.yoda.id, query.SHOW_DELETED: True},
             headers={"Content-Type": "application/json"},
         )
-        self.assertEqual(response_yoda_deleted.status_code, 200)
-        self.assertValidInstanceListData(response_yoda_deleted.json(), 1)
-        instances = response_yoda_deleted.json()["instances"]
-        self.assertEqual(self.instance_7.id, instances[0].get("id"))
+        self.assertInstanceListContainsStrictly(response_yoda_deleted, [self.instance_7])
 
         response_guest = self.client.get(
             "/api/instances/",
             {query.USER_IDS: self.guest.id},
             headers={"Content-Type": "application/json"},
         )
-        self.assertEqual(response_guest.status_code, 200)
-        self.assertValidInstanceListData(response_guest.json(), 1)
-        instances = response_guest.json()["instances"]
-        self.assertEqual(self.instance_2.id, instances[0].get("id"))
+        self.assertInstanceListContainsStrictly(response_guest, [self.instance_2])
 
         response_supervisor = self.client.get(
             "/api/instances/",
             {query.USER_IDS: self.supervisor.id},
             headers={"Content-Type": "application/json"},
         )
-        self.assertEqual(response_supervisor.status_code, 200)
-        self.assertValidInstanceListData(response_supervisor.json(), 2)
-        instances = response_supervisor.json()["instances"]
-        self.assertEqual(self.instance_3.id, instances[0].get("id"))
-        self.assertEqual(self.instance_6.id, instances[1].get("id"))
+        self.assertInstanceListContainsStrictly(response_supervisor, [self.instance_3, self.instance_6])
 
         response_yoda_guest = self.client.get(
             "/api/instances/",
             {query.USER_IDS: f"{self.yoda.id},{self.guest.id}"},
             headers={"Content-Type": "application/json"},
         )
-        self.assertEqual(response_yoda_guest.status_code, 200)
-        self.assertValidInstanceListData(response_yoda_guest.json(), 5)
-        instances = response_yoda_guest.json()["instances"]
 
-        self.assertEqual(self.instance_1.id, instances[0].get("id"))
-        self.assertEqual(self.instance_4.id, instances[1].get("id"))
-        self.assertEqual(self.instance_8.id, instances[2].get("id"))
-        self.assertEqual(self.instance_2.id, instances[4].get("id"))
+        self.assertInstanceListContainsStrictly(
+            response_yoda_guest, [self.instance_1, self.instance_4, self.instance_8, self.instance_2, self.instance_5]
+        )
+
+    def test_instances_list_search_by_ids(self):
+        self.client.force_authenticate(self.yoda)
+        orgunit = m.OrgUnit.objects.create(name="Org Unit 1")
+        instance_1 = self.create_form_instance(
+            form=self.form_1, period="202001", org_unit=orgunit, project=self.project
+        )
+        instance_2 = self.create_form_instance(
+            form=self.form_1, period="202002", org_unit=orgunit, project=self.project
+        )
+        instance_3 = self.create_form_instance(
+            form=self.form_1, period="202003", org_unit=orgunit, project=self.project
+        )
+        # ids without coma
+        response_without_coma = self.client.get(
+            "/api/instances/",
+            {"search": "ids: " + str(instance_2.id) + " " + str(instance_1.id)},
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertInstanceListContainsStrictly(response_without_coma, [instance_1, instance_2])
+
+        # ids with coma
+        response_with_coma = self.client.get(
+            "/api/instances/",
+            {"search": "ids: " + str(instance_2.id) + ", " + str(instance_3.id)},
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertInstanceListContainsStrictly(response_with_coma, [instance_2, instance_3])
 
     def test_instances_bad_sent_date_from(self):
         self.client.force_authenticate(self.yoda)
@@ -1768,11 +1806,8 @@ class InstancesAPITestCase(APITestCase):
             },
             headers={"Content-Type": "application/json"},
         )
-        self.assertJSONResponse(response, 200)
-        self.assertValidInstanceListData(response.json(), 2)
-        instances = response.json()["instances"]
-        self.assertEqual(self.instance_1.id, instances[0].get("id"))
-        self.assertEqual(self.instance_2.id, instances[1].get("id"))
+
+        self.assertInstanceListContainsStrictly(response, [self.instance_1, self.instance_2])
 
         response = self.client.get(
             "/api/instances/",
@@ -1782,10 +1817,7 @@ class InstancesAPITestCase(APITestCase):
             },
             headers={"Content-Type": "application/json"},
         )
-        self.assertJSONResponse(response, 200)
-        self.assertValidInstanceListData(response.json(), 1)
-        instances = response.json()["instances"]
-        self.assertEqual(self.instance_3.id, instances[0].get("id"))
+        self.assertInstanceListContainsStrictly(response, [self.instance_3])
 
         response = self.client.get(
             "/api/instances/",
@@ -1795,10 +1827,8 @@ class InstancesAPITestCase(APITestCase):
             },
             headers={"Content-Type": "application/json"},
         )
-        self.assertJSONResponse(response, 200)
-        self.assertValidInstanceListData(response.json(), 2)
-        instances = response.json()["instances"]
-        self.assertEqual(self.instance_4.id, instances[0].get("id"))
+
+        self.assertInstanceListContainsStrictly(response, [self.instance_4, self.instance_8])
 
     def test_instances_bad_modification_date_from(self):
         self.client.force_authenticate(self.yoda)
@@ -1828,11 +1858,7 @@ class InstancesAPITestCase(APITestCase):
             },
             headers={"Content-Type": "application/json"},
         )
-        self.assertJSONResponse(response, 200)
-        self.assertValidInstanceListData(response.json(), 2)
-        instances = response.json()["instances"]
-        self.assertEqual(self.instance_5.id, instances[0].get("id"))
-        self.assertEqual(self.instance_6.id, instances[1].get("id"))
+        self.assertInstanceListContainsStrictly(response, [self.instance_5, self.instance_6])
 
     def test_instances_filter_from_date_to_date(self):
         # Create new instance with source_created_at None
@@ -1854,19 +1880,9 @@ class InstancesAPITestCase(APITestCase):
             },
             headers={"Content-Type": "application/json"},
         )
-        self.assertJSONResponse(response, 200)
-        self.assertValidInstanceListData(response.json(), 4)
-        instances = response.json()["instances"]
-        instance_ids = [i["id"] for i in instances]
-        instance_ids.sort()
-        self.assertEqual(
-            instance_ids,
-            [
-                self.instance_3.id,
-                self.instance_4.id,
-                self.instance_8.id,
-                another_instance.id,
-            ],
+
+        self.assertInstanceListContainsStrictly(
+            response, [self.instance_3, self.instance_4, self.instance_8, another_instance]
         )
 
     def test_attachments_list(self):
@@ -1925,16 +1941,547 @@ class InstancesAPITestCase(APITestCase):
         # Test instance with no change request
         response = self.client.get(f"/api/instances/{instance_reference.id}/")
         self.assertEqual(response.status_code, 200)
-        respons_json = response.json()
-        self.assertListEqual(respons_json["change_requests"], [])
+        response_json = response.json()
+        self.assertListEqual(response_json["change_requests"], [])
 
         m.OrgUnitChangeRequest.objects.create(org_unit=org_unit, new_name="Modified org unit")
         response = self.client.get(f"/api/instances/{instance_reference.id}/")
-        respons_json = response.json()
-        self.assertListEqual(respons_json["change_requests"], [])
+        response_json = response.json()
+        self.assertListEqual(response_json["change_requests"], [])
         # Test instance with change request linked to it
         change_request_instance_reference = m.OrgUnitChangeRequest.objects.create(org_unit=org_unit)
         change_request_instance_reference.new_reference_instances.add(instance_reference)
         response = self.client.get(f"/api/instances/{instance_reference.id}/")
-        respons_json = response.json()
-        self.assertEqual(respons_json["change_requests"][0]["id"], change_request_instance_reference.id)
+        response_json = response.json()
+        self.assertEqual(response_json["change_requests"][0]["id"], change_request_instance_reference.id)
+
+    def test_check_bulk_push_gps_select_all_ok(self):
+        # pushing gps data means that we need a mapping of 1 instance to 1 orgunit
+        for instance in [self.instance_2, self.instance_3, self.instance_4]:
+            instance.deleted_at = datetime.datetime.now()
+            instance.deleted = True
+            instance.save()
+            instance.refresh_from_db()
+
+        # setting gps data for instances that were not deleted
+        self.instance_5.org_unit = self.jedi_council_endor
+        self.instance_6.org_unit = self.jedi_council_endor_region
+        self.instance_8.org_unit = self.ou_top_1
+        new_location = Point(1, 2, 3)
+        for instance in [self.instance_1, self.instance_5, self.instance_6, self.instance_8]:
+            instance.location = new_location
+            instance.save()
+            instance.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        response = self.client.get("/api/instances/check_bulk_gps_push/")  # by default, select_all = True
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "success")
+
+    def test_check_bulk_push_gps_select_all_error_same_org_unit(self):
+        # changing location for some instances to have multiple hits on multiple org_units
+        self.instance_1.org_unit = self.jedi_council_endor
+        self.instance_2.org_unit = self.jedi_council_endor
+        new_location = Point(1, 2, 3)
+        for instance in [self.instance_1, self.instance_2]:
+            instance.location = new_location
+            instance.save()
+            instance.refresh_from_db()
+
+        # Let's delete some instances, the result will be the same
+        for instance in [self.instance_6, self.instance_8]:
+            instance.deleted_at = datetime.datetime.now()
+            instance.deleted = True
+            instance.save()
+
+        self.client.force_authenticate(self.yoda)
+        response = self.client.get("/api/instances/check_bulk_gps_push/")  # by default, select_all = True
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "errors")
+        self.assertCountEqual(
+            response_json["error_same_org_unit"],
+            [self.instance_1.org_unit_id, self.instance_3.org_unit_id],
+        )
+
+    def test_check_bulk_push_gps_select_all_error_read_only_source(self):
+        # Making the source read only
+        self.sw_source.read_only = True
+        self.sw_source.save()
+
+        # Changing some instance.org_unit so that all the results don't appear only in "error_same_org_unit"
+        self.instance_2.org_unit = self.jedi_council_endor
+        self.instance_3.org_unit = self.jedi_council_endor_region
+        self.instance_8.org_unit = self.ou_top_1
+        for instance in [self.instance_2, self.instance_3, self.instance_8]:
+            instance.save()
+            instance.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        response = self.client.get("/api/instances/check_bulk_gps_push/")  # by default, select_all = True
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "errors")
+        self.assertCountEqual(
+            response_json["error_read_only_source"],
+            [
+                self.instance_1.org_unit_id,
+                self.instance_2.org_unit_id,
+                self.instance_3.org_unit_id,
+                self.instance_8.org_unit_id,
+            ],
+        )
+
+    def test_check_bulk_push_gps_select_all_warning_no_location(self):
+        # Changing some instance.org_unit so that all the results don't appear only in "error_same_org_unit"
+        self.instance_2.org_unit = self.jedi_council_endor
+        self.instance_3.org_unit = self.jedi_council_endor_region
+        self.instance_8.org_unit = self.ou_top_1
+        for instance in [self.instance_2, self.instance_3, self.instance_8]:
+            instance.save()
+            instance.refresh_from_db()
+
+        # Let's delete some instances to avoid getting "error_same_org_unit"
+        for instance in [self.instance_4, self.instance_5, self.instance_6]:
+            instance.deleted_at = datetime.datetime.now()
+            instance.deleted = True
+            instance.save()
+
+        self.client.force_authenticate(self.yoda)
+        response = self.client.get("/api/instances/check_bulk_gps_push/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "warnings")
+        self.assertCountEqual(
+            response_json["warning_no_location"],
+            [
+                self.instance_1.org_unit_id,
+                self.instance_2.org_unit_id,
+                self.instance_3.org_unit_id,
+                self.instance_8.org_unit_id,
+            ],
+        )
+
+    def test_check_bulk_push_gps_select_all_warning_overwrite(self):
+        # pushing gps data means that we need a mapping of 1 instance to 1 orgunit
+        for instance in [self.instance_2, self.instance_3, self.instance_4]:
+            instance.deleted_at = datetime.datetime.now()
+            instance.deleted = True
+            instance.save()
+            instance.refresh_from_db()
+
+        # no org unit was assigned, so we select some
+        self.instance_5.org_unit = self.jedi_council_endor
+        self.instance_6.org_unit = self.jedi_council_endor_region
+        self.instance_8.org_unit = self.ou_top_1
+        new_org_unit_location = Point(1, 2, 3)
+        new_instance_location = Point(4, 5, 6)
+        non_deleted_instances = [self.instance_1, self.instance_5, self.instance_6, self.instance_8]
+        for instance in non_deleted_instances:
+            # setting gps data for org_units whose instance was not deleted
+            org_unit = instance.org_unit
+            org_unit.location = new_org_unit_location
+            org_unit.save()
+            org_unit.refresh_from_db()
+
+            # setting gps data for these instances as well, since we want to override the org_unit location
+            instance.location = new_instance_location
+            instance.save()
+            instance.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        response = self.client.get("/api/instances/check_bulk_gps_push/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "warnings")
+        self.assertCountEqual(response_json["warning_overwrite"], [i.org_unit_id for i in non_deleted_instances])
+
+    def test_check_bulk_push_gps_select_all_warning_both(self):
+        # pushing gps data means that we need a mapping of 1 instance to 1 orgunit
+        for instance in [self.instance_2, self.instance_3, self.instance_4]:
+            instance.deleted_at = datetime.datetime.now()
+            instance.deleted = True
+            instance.save()
+            instance.refresh_from_db()
+
+        # instances 1 and 5 will overwrite their org_unit location
+        new_instance_location = Point(4, 5, 6)
+        self.instance_5.org_unit = self.jedi_council_endor
+        self.instance_5.location = new_instance_location
+        self.instance_1.location = new_instance_location
+
+        # instances 6 and 8 will have no location data
+        self.instance_6.org_unit = self.jedi_council_endor_region
+        self.instance_8.org_unit = self.ou_top_1
+
+        new_org_unit_location = Point(1, 2, 3)
+        non_deleted_instances = [self.instance_1, self.instance_5, self.instance_6, self.instance_8]
+        for instance in non_deleted_instances:
+            # setting gps data for org_units whose instance was not deleted
+            org_unit = instance.org_unit
+            org_unit.location = new_org_unit_location
+            org_unit.save()
+            org_unit.refresh_from_db()
+
+            instance.save()
+            instance.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        response = self.client.get("/api/instances/check_bulk_gps_push/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "warnings")
+        self.assertCountEqual(
+            response_json["warning_overwrite"], [self.instance_1.org_unit_id, self.instance_5.org_unit_id]
+        )
+        self.assertCountEqual(
+            response_json["warning_no_location"], [self.instance_6.org_unit_id, self.instance_8.org_unit_id]
+        )
+
+    def test_check_bulk_push_gps_selected_ids_ok(self):
+        self.client.force_authenticate(self.yoda)
+        new_instance = self.create_form_instance(
+            form=self.form_1,
+            period="2024Q4",
+            org_unit=self.jedi_council_corruscant,
+            project=self.project,
+            created_by=self.yoda,
+            location=Point(5, 6.45, 2.33),
+        )
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?select_all=false&selected_ids={new_instance.id}"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        # Instance has a location, but OrgUnit doesn't, so check is ok, location could be pushed
+        self.assertEqual(response_json["result"], "success")
+
+    def test_check_bulk_push_gps_selected_ids_error(self):
+        self.client.force_authenticate(self.yoda)
+        # Setting GPS data for these 3 instances (same OrgUnit)
+        for instance in [self.instance_1, self.instance_2, self.instance_3]:
+            instance.location = Point(5, 6.45, 2.33)
+            instance.save()
+            instance.refresh_from_db()
+
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?select_all=false&selected_ids={self.instance_1.id},{self.instance_2.id},{self.instance_3.id}"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "errors")
+        self.assertCountEqual(response_json["error_same_org_unit"], [self.instance_1.org_unit_id])
+
+    def test_check_bulk_push_gps_selected_ids_error_unknown_id(self):
+        self.client.force_authenticate(self.yoda)
+        probably_not_a_valid_id = 1234567980
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?select_all=false&selected_ids={probably_not_a_valid_id}"
+        )
+        self.assertContains(
+            response,
+            "Not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_check_bulk_push_gps_selected_ids_error_wrong_account(self):
+        # Preparing new setup
+        new_account, new_data_source, _, new_project = self.create_account_datasource_version_project(
+            "new source", "new account", "new project"
+        )
+        new_user, _, _ = self.create_base_users(new_account, ["iaso_submissions"])
+        new_org_unit = m.OrgUnit.objects.create(
+            name="New Org Unit", source_ref="new org unit", validation_status="VALID"
+        )
+        new_form = m.Form.objects.create(name="new form", period_type=m.MONTH, single_per_period=True)
+        new_instance = self.create_form_instance(
+            form=new_form,
+            period="202001",
+            org_unit=new_org_unit,
+            project=new_project,
+            created_by=new_user,
+            export_id="Vzhn0nceudr",
+        )
+
+        self.client.force_authenticate(self.yoda)
+        # Checking instance from new account
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?select_all=false&selected_ids={new_instance.id}"
+        )
+        self.assertContains(
+            response,
+            "Not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_check_bulk_push_gps_selected_ids_warning_no_location(self):
+        self.client.force_authenticate(self.yoda)
+        # Linking these instances to some orgunits
+        self.instance_1.org_unit = self.jedi_council_corruscant
+        self.instance_2.org_unit = self.jedi_council_endor
+        self.instance_3.org_unit = self.jedi_council_endor_region
+        for instance in [self.instance_1, self.instance_2, self.instance_3]:
+            instance.save()
+            instance.refresh_from_db()
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?select_all=false&selected_ids={self.instance_1.id},{self.instance_2.id},{self.instance_3.id}"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "warnings")
+        self.assertCountEqual(
+            response_json["warning_no_location"],
+            [self.instance_1.org_unit_id, self.instance_2.org_unit_id, self.instance_3.org_unit_id],
+        )
+
+    def test_check_bulk_push_gps_selected_ids_warning_overwrite(self):
+        # no org unit was assigned, so we select some
+        self.instance_1.org_unit = self.jedi_council_endor
+        self.instance_2.org_unit = self.jedi_council_corruscant
+        new_org_unit_location = Point(1, 2, 3)
+        new_instance_location = Point(4, 5, 6)
+        for instance in [self.instance_1, self.instance_2]:
+            # setting gps data for org_units
+            org_unit = instance.org_unit
+            org_unit.location = new_org_unit_location
+            org_unit.save()
+            org_unit.refresh_from_db()
+
+            # setting gps data for these instances as well, since we want to override the org_unit location
+            instance.location = new_instance_location
+            instance.save()
+            instance.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?select_all=false&selected_ids={self.instance_1.id},{self.instance_2.id}"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "warnings")
+        self.assertCountEqual(
+            response_json["warning_overwrite"], [self.instance_1.org_unit_id, self.instance_2.org_unit_id]
+        )
+
+    def test_check_bulk_push_gps_selected_ids_warning_both(self):
+        # instances 1 and 5 will overwrite their org_unit location
+        new_instance_location = Point(4, 5, 6)
+        self.instance_5.org_unit = self.jedi_council_endor
+        self.instance_5.location = new_instance_location
+        self.instance_1.location = new_instance_location
+
+        # instances 6 and 8 will have no location data
+        self.instance_6.org_unit = self.jedi_council_endor_region
+        self.instance_8.org_unit = self.ou_top_1
+
+        new_org_unit_location = Point(1, 2, 3)
+        for instance in [self.instance_1, self.instance_5, self.instance_6, self.instance_8]:
+            # setting gps data for org_units
+            org_unit = instance.org_unit
+            org_unit.location = new_org_unit_location
+            org_unit.save()
+            org_unit.refresh_from_db()
+
+            instance.save()
+            instance.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?select_all=false&selected_ids={self.instance_1.id},"
+            f"{self.instance_5.id},{self.instance_6.id},{self.instance_8.id}"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "warnings")
+        self.assertCountEqual(
+            response_json["warning_overwrite"], [self.instance_1.org_unit_id, self.instance_5.org_unit_id]
+        )
+        self.assertCountEqual(
+            response_json["warning_no_location"], [self.instance_6.org_unit_id, self.instance_8.org_unit_id]
+        )
+
+    def test_check_bulk_push_gps_unselected_ids_ok(self):
+        self.instance_1.location = Point(1, 2, 3)
+        self.instance_1.save()
+        self.instance_1.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        # only pushing instance_1 GPS
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?unselected_ids={self.instance_2.id},{self.instance_3.id},"
+            f"{self.instance_4.id},{self.instance_5.id},{self.instance_6.id},{self.instance_8.id},"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "success")
+
+    def test_check_bulk_push_gps_unselected_ids_error(self):
+        # no org unit was assigned, so we select some
+        for instance in [self.instance_1, self.instance_2]:
+            instance.org_unit = self.jedi_council_endor
+            instance.location = Point(1, 2, 3)
+            instance.save()
+            instance.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        # only pushing instance_1 & instance_2 GPS
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?unselected_ids={self.instance_3.id},"
+            f"{self.instance_4.id},{self.instance_5.id},{self.instance_6.id},{self.instance_8.id},"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "errors")
+        self.assertCountEqual(response_json["error_same_org_unit"], [self.instance_1.org_unit_id])
+
+    def test_check_bulk_push_gps_unselected_ids_error_unknown_id(self):
+        self.client.force_authenticate(self.yoda)
+        probably_not_a_valid_id = 1234567980
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?select_all=false&unselected_ids={probably_not_a_valid_id}"
+        )
+        self.assertContains(
+            response,
+            "Not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_check_bulk_push_gps_unselected_ids_error_wrong_account(self):
+        # Preparing new setup
+        new_account, new_data_source, _, new_project = self.create_account_datasource_version_project(
+            "new source", "new account", "new project"
+        )
+        new_user, _, _ = self.create_base_users(new_account, ["iaso_submissions"])
+        new_org_unit = m.OrgUnit.objects.create(
+            name="New Org Unit", source_ref="new org unit", validation_status="VALID"
+        )
+        new_form = m.Form.objects.create(name="new form", period_type=m.MONTH, single_per_period=True)
+        new_instance = self.create_form_instance(
+            form=new_form,
+            period="202001",
+            org_unit=new_org_unit,
+            project=new_project,
+            created_by=new_user,
+            export_id="Vzhn0nceudr",
+        )
+
+        self.client.force_authenticate(self.yoda)
+        # Checking instance from new account
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?select_all=false&unselected_ids={new_instance.id}"
+        )
+        self.assertContains(
+            response,
+            "Not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_check_bulk_push_gps_unselected_ids_warning_no_location(self):
+        # Changing instance_1 org unit in order to be different from instance_2
+        self.instance_1.org_unit = self.jedi_council_endor
+        self.instance_1.save()
+        self.instance_1.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        # only pushing instance_1 & instance_2 GPS
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?unselected_ids={self.instance_3.id},"
+            f"{self.instance_4.id},{self.instance_5.id},{self.instance_6.id},{self.instance_8.id},"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "warnings")
+        self.assertCountEqual(
+            response_json["warning_no_location"], [self.instance_1.org_unit_id, self.instance_2.org_unit_id]
+        )
+
+    def test_check_bulk_push_gps_unselected_ids_warning_overwrite(self):
+        self.instance_2.org_unit = self.jedi_council_endor
+        self.instance_3.org_unit = self.jedi_council_endor_region
+
+        # no org unit was assigned, so we select some
+        new_org_unit_location = Point(1, 2, 3)
+        new_instance_location = Point(4, 5, 6)
+        for instance in [self.instance_2, self.instance_3]:
+            # setting gps data for org_units
+            org_unit = instance.org_unit
+            org_unit.location = new_org_unit_location
+            org_unit.save()
+            org_unit.refresh_from_db()
+
+            # setting gps data for these instances as well, since we want to override the org_unit location
+            instance.location = new_instance_location
+            instance.save()
+            instance.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        # only pushing instance_3 & instance_2 GPS
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?unselected_ids={self.instance_1.id},"
+            f"{self.instance_4.id},{self.instance_5.id},{self.instance_6.id},{self.instance_8.id},"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "warnings")
+        self.assertCountEqual(
+            response_json["warning_overwrite"], [self.instance_3.org_unit_id, self.instance_2.org_unit_id]
+        )
+
+    def test_check_bulk_push_gps_unselected_ids_warning_both(self):
+        # instances 1 and 5 will overwrite their org_unit location
+        new_instance_location = Point(4, 5, 6)
+        self.instance_5.org_unit = self.jedi_council_endor
+        self.instance_5.location = new_instance_location
+        self.instance_1.location = new_instance_location
+
+        # instances 6 and 8 will have no location data
+        self.instance_6.org_unit = self.jedi_council_endor_region
+        self.instance_8.org_unit = self.ou_top_1
+
+        new_org_unit_location = Point(1, 2, 3)
+        for instance in [self.instance_1, self.instance_5, self.instance_6, self.instance_8]:
+            # setting gps data for org_units
+            org_unit = instance.org_unit
+            org_unit.location = new_org_unit_location
+            org_unit.save()
+            org_unit.refresh_from_db()
+
+            instance.save()
+            instance.refresh_from_db()
+
+        self.client.force_authenticate(self.yoda)
+        response = self.client.get(
+            f"/api/instances/check_bulk_gps_push/?unselected_ids={self.instance_2.id},{self.instance_3.id},{self.instance_4.id}"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_json = response.json()
+        self.assertEqual(response_json["result"], "warnings")
+        self.assertCountEqual(
+            response_json["warning_overwrite"], [self.instance_1.org_unit_id, self.instance_5.org_unit_id]
+        )
+        self.assertCountEqual(
+            response_json["warning_no_location"], [self.instance_6.org_unit_id, self.instance_8.org_unit_id]
+        )
+
+    def assertInstanceListContainsStrictly(self, api_response, expected_instances):
+        try:
+            self.assertEqual(api_response.status_code, 200)
+            self.assertValidInstanceListData(api_response.json(), len(expected_instances))
+            actual_instances_ids = [x.get("id") for x in api_response.json()["instances"]]
+
+            self.assertListEqual(sorted(actual_instances_ids), sorted([i.id for i in expected_instances]))
+        except AssertionError as e:
+            print("expected ", api_response.json(), "to contains", expected_instances, " but", e)
+            print("expected ids ", [i.id for i in expected_instances])
+            print("actual ids ", [x.get("id") for x in api_response.json()["instances"]])
+            print("instance_1", self.instance_1.id)
+            print("instance_2", self.instance_2.id)
+            print("instance_3", self.instance_3.id)
+            print("instance_4", self.instance_4.id)
+            print("instance_5", self.instance_5.id)
+            print("instance_6", self.instance_6.id)
+            print("instance_7", self.instance_7.id)
+            print("instance_8", self.instance_8.id)
+            raise e

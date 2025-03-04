@@ -1,17 +1,19 @@
 import json
 import logging
 import ntpath
+
 from copy import copy
 from time import gmtime, strftime
 from typing import Any, Dict, Union
 
 import pandas as pd
+
 from django.contrib.auth.models import User
 from django.contrib.gis.geos import Point
 from django.core.paginator import Paginator
 from django.db import connection, transaction
 from django.db.models import Count, F, Func, Prefetch, Q, QuerySet
-from django.http import HttpResponse, StreamingHttpResponse
+from django.http import Http404, HttpResponse, StreamingHttpResponse
 from django.utils.timezone import now
 from rest_framework import permissions, serializers, status, viewsets
 from rest_framework.decorators import action
@@ -21,6 +23,7 @@ from rest_framework.response import Response
 from typing_extensions import Annotated, TypedDict
 
 import iaso.periods as periods
+
 from hat.api.export_utils import Echo, generate_xlsx, iter_items, timestamp_to_utc_datetime
 from hat.audit.models import INSTANCE_API, Modification, log_modification
 from hat.common.utils import queryset_iterator
@@ -36,22 +39,31 @@ from iaso.models import (
     OrgUnitChangeRequest,
     Project,
 )
-from iaso.utils import timestamp_to_datetime
+from iaso.utils.date_and_time import timestamp_to_datetime
 from iaso.utils.file_utils import get_file_type
 
 from ..models.forms import CR_MODE_IF_REFERENCE_FORM
-from ..utils.models.common import get_creator_name
+from ..utils.models.common import check_instance_bulk_gps_push, get_creator_name
 from . import common
 from .comment import UserSerializerForComment
-from .common import CONTENT_TYPE_CSV, CONTENT_TYPE_XLSX, FileFormatEnum, TimestampField, safe_api_import
+from .common import (
+    CONTENT_TYPE_CSV,
+    CONTENT_TYPE_XLSX,
+    FileFormatEnum,
+    TimestampField,
+    parse_comma_separated_numeric_values,
+    safe_api_import,
+)
 from .instance_filters import get_form_from_instance_filters, parse_instance_filters
+from .org_units import HasCreateOrgUnitPermission
+
 
 logger = logging.getLogger(__name__)
 
 
 class InstanceSerializer(serializers.ModelSerializer):
     org_unit = serializers.PrimaryKeyRelatedField(queryset=OrgUnit.objects.all())
-    period = serializers.CharField(max_length=8, allow_blank=True)
+    period = serializers.CharField(max_length=9, allow_blank=True)
 
     class Meta:
         model = Instance
@@ -84,7 +96,7 @@ class InstanceSerializer(serializers.ModelSerializer):
 
 class HasInstancePermission(permissions.BasePermission):
     def has_permission(self, request: Request, view):
-        if request.method == "POST":
+        if request.method == "POST":  # to handle anonymous submissions sent by mobile
             return True
 
         return request.user.is_authenticated and (
@@ -103,6 +115,20 @@ class HasInstancePermission(permissions.BasePermission):
         if obj.can_user_modify(request.user):
             return True
         return False
+
+
+class HasInstanceBulkPermission(permissions.BasePermission):
+    """
+    Designed for POST endpoints that are not designed to receive new submissions.
+    """
+
+    def has_permission(self, request: Request, view):
+        return request.user.is_authenticated and (
+            request.user.has_perm(permission.FORMS)
+            or request.user.has_perm(permission.SUBMISSIONS)
+            or request.user.has_perm(permission.REGISTRY_WRITE)
+            or request.user.has_perm(permission.REGISTRY_READ)
+        )
 
 
 class InstanceFileSerializer(serializers.Serializer):
@@ -414,7 +440,7 @@ class InstancesViewSet(viewsets.ViewSet):
                 res["limit"] = limit
 
                 return Response(res)
-            elif as_small_dict:
+            if as_small_dict:
                 # TODO: apparently, this branch is not used by the frontend nor the mobile app
                 queryset = (
                     queryset.annotate(instancefile_count=Count("instancefile"))
@@ -424,17 +450,16 @@ class InstancesViewSet(viewsets.ViewSet):
                     .defer("json")
                 )
                 return Response([instance.as_small_dict() for instance in queryset])
-            else:
-                return Response(
-                    {
-                        "instances": [
-                            instance.as_dict_with_descriptor() if with_descriptor == "true" else instance.as_dict()
-                            for instance in queryset
-                        ]
-                    }
-                )
-        else:  # This is a CSV/XLSX file export
-            return self.list_file_export(filters=filters, queryset=queryset, file_format=file_format_export)
+            return Response(
+                {
+                    "instances": [
+                        instance.as_dict_with_descriptor() if with_descriptor == "true" else instance.as_dict()
+                        for instance in queryset
+                    ]
+                }
+            )
+        # This is a CSV/XLSX file export
+        return self.list_file_export(filters=filters, queryset=queryset, file_format=file_format_export)
 
     @action(detail=True, methods=["POST"])
     def add_lock(self, request, pk):
@@ -598,6 +623,68 @@ class InstancesViewSet(viewsets.ViewSet):
             status=201,
         )
 
+    @action(
+        detail=False,
+        methods=["GET"],
+        permission_classes=[permissions.IsAuthenticated, HasInstanceBulkPermission, HasCreateOrgUnitPermission],
+    )
+    def check_bulk_gps_push(self, request):
+        # first, let's parse all parameters received from the URL
+        select_all, selected_ids, unselected_ids = self._parse_check_bulk_gps_push_parameters(request.GET)
+
+        # then, let's make sure that each ID actually exists and that the user has access to it
+        instances_query = self.get_queryset()
+        if instances_query.filter(pk__in=selected_ids).count() != len(selected_ids):
+            raise Http404
+        if instances_query.filter(pk__in=unselected_ids).count() != len(unselected_ids):
+            raise Http404
+
+        # let's filter everything
+        filters = parse_instance_filters(request.GET)
+        instances_query = instances_query.select_related("org_unit")
+        instances_query = instances_query.exclude(file="").exclude(device__test_device=True)
+        instances_query = instances_query.for_filters(**filters)
+
+        if not select_all:
+            instances_query = instances_query.filter(pk__in=selected_ids)
+        else:
+            instances_query = instances_query.exclude(pk__in=unselected_ids)
+
+        success, errors, warnings = check_instance_bulk_gps_push(instances_query)
+
+        if not success:
+            errors["result"] = "errors"
+            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+        if warnings:
+            warnings["result"] = "warnings"
+            return Response(warnings, status=status.HTTP_200_OK)
+
+        return Response(
+            {
+                "result": "success",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def _parse_check_bulk_gps_push_parameters(self, query_parameters):
+        raw_select_all = query_parameters.get("select_all", True)
+        select_all = raw_select_all not in ["false", "False", "0", 0, False]
+
+        raw_selected_ids = query_parameters.get("selected_ids", None)
+        if raw_selected_ids:
+            selected_ids = parse_comma_separated_numeric_values(raw_selected_ids, "selected_ids")
+        else:
+            selected_ids = []
+
+        raw_unselected_ids = query_parameters.get("unselected_ids", None)
+        if raw_unselected_ids:
+            unselected_ids = parse_comma_separated_numeric_values(raw_unselected_ids, "unselected_ids")
+        else:
+            unselected_ids = []
+
+        return select_all, selected_ids, unselected_ids
+
     QUERY = """
     select DATE_TRUNC('month', COALESCE(iaso_instance.source_created_at, iaso_instance.created_at)) as month,
            (select name from iaso_form where id = iaso_instance.form_id) as form_name,
@@ -672,7 +759,15 @@ class InstancesViewSet(viewsets.ViewSet):
         """
         GET /api/instances/<pk>/instance_logs/<logId>/
         """
-        instance = get_object_or_404(Instance, pk=pk)
+        instance = get_object_or_404(
+            Instance.objects.filter(pk=pk).prefetch_related(
+                Prefetch(
+                    "instancefile_set",
+                    queryset=InstanceFile.objects.filter(deleted=False).only("file"),
+                    to_attr="filtered_files",
+                )
+            )
+        )
         log = get_object_or_404(Modification, pk=logId)
         log_dict = log.as_dict()
         possible_fields = (
@@ -680,7 +775,7 @@ class InstancesViewSet(viewsets.ViewSet):
             if instance.form_version and instance.form_version.possible_fields
             else []
         )
-
+        log_dict["files"] = [f.file.url if f.file else None for f in instance.filtered_files]
         log_dict["possible_fields"] = possible_fields
         return Response(log_dict)
 
@@ -748,7 +843,7 @@ def import_data(instances, user, app_id):
 
             if entity.deleted_at:
                 logger.info(
-                    f"Entity %s is soft-deleted for instance %s %s",
+                    "Entity %s is soft-deleted for instance %s %s",
                     entity.uuid,
                     instance.uuid,
                     instance.name,
@@ -758,7 +853,7 @@ def import_data(instances, user, app_id):
                     while active_entity.deleted_at and active_entity.merged_to:
                         active_entity = active_entity.merged_to
                     logger.info(
-                        f"Adding new instance %s %s to merged entity %s",
+                        "Adding new instance %s %s to merged entity %s",
                         instance.uuid,
                         instance.name,
                         active_entity.uuid,

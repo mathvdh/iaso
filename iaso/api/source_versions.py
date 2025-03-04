@@ -8,7 +8,7 @@ from iaso.models import DataSource, SourceVersion
 
 from .common import CONTENT_TYPE_CSV, HasPermission, ModelViewSet
 from .source_versions_serializers import DiffSerializer, ExportSerializer
-from .tasks import TaskSerializer
+from .tasks.serializers import TaskSerializer
 
 
 class SourceVersionSerializer(serializers.ModelSerializer):
@@ -63,6 +63,17 @@ class SourceVersionSerializer(serializers.ModelSerializer):
 
     def get_org_units_count(self, source_version: SourceVersion):
         return source_version.orgunit_set.count()
+
+
+class SourceVersionsDropdownSerializer(serializers.ModelSerializer):
+    data_source_name: serializers.SlugRelatedField = serializers.SlugRelatedField(
+        source="data_source", slug_field="name", read_only=True
+    )
+
+    class Meta:
+        model = SourceVersion
+        fields = ["id", "data_source", "number", "data_source_name"]
+        read_only_fields = ["id", "data_source", "number", "data_source_name"]
 
 
 class SourceVersionViewSet(ModelViewSet):
@@ -163,3 +174,14 @@ class SourceVersionViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
         task = serializer.launch_export(user=request.user)
         return Response({"task": TaskSerializer(instance=task).data})
+
+    @action(methods=["GET"], detail=False, serializer_class=SourceVersionsDropdownSerializer)
+    def dropdown(self, request, *args):
+        """To be used in dropdowns (filters)
+
+        * Read only
+        """
+
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)

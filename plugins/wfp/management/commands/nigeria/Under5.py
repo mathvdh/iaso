@@ -1,10 +1,12 @@
-from plugins.wfp.models import *
-from iaso.models import *
-from django.core.management.base import BaseCommand
+import logging
+
 from itertools import groupby
 from operator import itemgetter
+
+from iaso.models import *
 from plugins.wfp.common import ETL
-import logging
+from plugins.wfp.models import *
+
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +66,11 @@ class NG_Under5:
                         ),
                     )
 
-                    if form_id in ["Anthropometric visit child", "anthropometric_admission_otp"]:
+                    if form_id in [
+                        "anthropometric_admission",
+                        "Anthropometric visit child",
+                        "anthropometric_admission_otp",
+                    ]:
                         initial_weight = current_weight
                         instances[i]["initial_weight"] = initial_weight
                         visit_date = visit.get(
@@ -109,24 +115,26 @@ class NG_Under5:
             )
         )
 
-    def run(self):
-        children_type = ["ng_-_tsfp_child_3", "ng_-_otp_child_3"]
-        entity_type = ETL(children_type)
-        type = EntityType.objects.get(code="ng_-_tsfp_child_3")
+    def run(self, type):
+        entity_type = ETL([type])
         account = entity_type.account_related_to_entity_type()
         beneficiaries = entity_type.retrieve_entities()
 
-        logger.info(f"Instances linked to Child Under 5 program: {beneficiaries.count()} for {type.name} on {account}")
+        logger.info(f"Instances linked to Child Under 5 program: {beneficiaries.count()} for {account}")
         entities = sorted(list(beneficiaries), key=itemgetter("entity_id"))
         existing_beneficiaries = ETL().existing_beneficiaries()
         instances = self.group_visit_by_entity(entities)
 
+        # Cleaning monthly statistics then update the table with fresh data
+        MonthlyStatistics.objects.all().filter(account=account, programme_type="U5").delete()
+
         for index, instance in enumerate(instances):
             logger.info(
-                f"---------------------------------------- Beneficiary N° {(index+1)} {instance['entity_id']}-----------------------------------"
+                f"---------------------------------------- Beneficiary N° {(index + 1)} {instance['entity_id']}-----------------------------------"
             )
             instance["journey"] = self.journeyMapper(
-                instance["visits"], ["Anthropometric visit child", "anthropometric_admission_otp"]
+                instance["visits"],
+                ["Anthropometric visit child", "anthropometric_admission", "anthropometric_admission_otp"],
             )
             beneficiary = Beneficiary()
             if instance["entity_id"] not in existing_beneficiaries and len(instance["journey"][0]["visits"]) > 0:
@@ -135,7 +143,7 @@ class NG_Under5:
                 beneficiary.entity_id = instance["entity_id"]
                 beneficiary.account = account
                 beneficiary.save()
-                logger.info(f"Created new beneficiary")
+                logger.info("Created new beneficiary")
             else:
                 beneficiary = Beneficiary.objects.filter(entity_id=instance["entity_id"]).first()
 
@@ -156,7 +164,7 @@ class NG_Under5:
                 else:
                     logger.info("No new journey")
             logger.info(
-                f"---------------------------------------------------------------------------------------------\n\n"
+                "---------------------------------------------------------------------------------------------\n\n"
             )
 
     def journeyMapper(self, visits, admission_form):
@@ -169,9 +177,9 @@ class NG_Under5:
 
         if len(visit_nutrition_program) > 0:
             nutrition_programme = ETL().program_mapper(visit_nutrition_program[0])
-            if nutrition_programme == "TSFP-MAM":
+            if nutrition_programme in ["TSFP_MAM", "TSFP-MAM", "TSFP"]:
                 current_journey["nutrition_programme"] = "TSFP"
-            elif nutrition_programme == "OTP-SAM":
+            elif nutrition_programme in ["OTP_SAM", "OTP-SAM", "OTP"]:
                 current_journey["nutrition_programme"] = "OTP"
             else:
                 current_journey["nutrition_programme"] = nutrition_programme

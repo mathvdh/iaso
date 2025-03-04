@@ -1,6 +1,6 @@
 import { defineMessages } from 'react-intl';
 
-const MESSAGES = defineMessages({
+export const MESSAGES = defineMessages({
     title: {
         id: 'iaso.polio.repository.title',
         defaultMessage: 'Vaccine Management Repository',
@@ -60,6 +60,38 @@ const MESSAGES = defineMessages({
     missing: {
         id: 'iaso.polio.label.vrfTypeMissing',
         defaultMessage: 'Missing',
+    },
+    incidentReports: {
+        id: 'iaso.polio.label.incidentReports',
+        defaultMessage: 'Incident reports',
+    },
+    destructionReports: {
+        id: 'iaso.polio.label.destructionReports',
+        defaultMessage: 'Destruction reports',
+    },
+    vaccine: {
+        id: 'iaso.polio.vaccine',
+        defaultMessage: 'Vaccine',
+    },
+    forms: {
+        id: 'iaso.forms.title',
+        defaultMessage: 'Forms',
+    },
+    reports: {
+        id: 'iaso.polio.reports',
+        defaultMessage: 'Reports',
+    },
+    noPdf: {
+        id: 'iaso.polio.repository.noPdf',
+        defaultMessage: 'No pdf',
+    },
+    withPdf: {
+        id: 'iaso.polio.repository.withPdf',
+        defaultMessage: 'With pdf',
+    },
+    formAisLate: {
+        id: 'iaso.polio.repository.formAisLate',
+        defaultMessage: 'Form A is late',
     },
 });
 

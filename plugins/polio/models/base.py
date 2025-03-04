@@ -2,22 +2,23 @@ import datetime
 import json
 import math
 import os
+
 from collections import defaultdict
 from datetime import date
-from typing import Any, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 from uuid import uuid4
 
 import django.db.models.manager
 import pandas as pd
+
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser, User
 from django.contrib.postgres.fields import ArrayField
 from django.core.files.base import File
-from django.core.files.storage import FileSystemStorage
 from django.core.serializers.json import DjangoJSONEncoder
 from django.core.validators import RegexValidator
 from django.db import models
-from django.db.models import Q, QuerySet, Sum
+from django.db.models import Q, QuerySet, Subquery, Sum
 from django.db.models.expressions import RawSQL
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -30,11 +31,13 @@ from translated_fields import TranslatedField
 from beanstalk_worker import task_decorator
 from iaso.models import Group, OrgUnit
 from iaso.models.base import Account, Task
+from iaso.models.entity import UserNotAuthError
 from iaso.models.microplanning import Team
 from iaso.utils import slugify_underscore
 from iaso.utils.models.soft_deletable import DefaultSoftDeletableManager, SoftDeletableModel
 from plugins.polio.preparedness.parser import open_sheet_by_url
 from plugins.polio.preparedness.spread_cache import CachedSpread
+
 
 VIRUSES = [
     ("PV1", _("PV1")),
@@ -43,9 +46,17 @@ VIRUSES = [
     ("cVDPV2", _("cVDPV2")),
     ("WPV1", _("WPV1")),
     ("PV1 & cVDPV2", _("PV1 & cVDPV2")),
+    ("cVDPV1 & cVDPV2", _("cVDPV1 & cVDPV2")),
 ]
 
 VACCINES = [
+    ("mOPV2", _("mOPV2")),
+    ("nOPV2", _("nOPV2")),
+    ("bOPV", _("bOPV")),
+    ("nOPV2 & bOPV", _("nOPV2 & bOPV")),
+]
+
+INDIVIDUAL_VACCINES = [
     ("mOPV2", _("mOPV2")),
     ("nOPV2", _("nOPV2")),
     ("bOPV", _("bOPV")),
@@ -112,8 +123,9 @@ class DelayReasons(models.TextChoices):
     VRF_NOT_SIGNED = "VRF_NOT_SIGNED", _("vrf_not_signed")
     FOUR_WEEKS_GAP_BETWEEN_ROUNDS = "FOUR_WEEKS_GAP_BETWEEN_ROUNDS", _("four_weeks_gap_betwenn_rounds")
     OTHER_VACCINATION_CAMPAIGNS = "OTHER_VACCINATION_CAMPAIGNS", _("other_vaccination_campaigns")
-    PENDING_LIQUIDATION_OF_PREVIOUS_SIA_FUNDING = "PENDING_LIQUIDATION_OF_PREVIOUS_SIA_FUNDING", _(
-        "pending_liquidation_of_previous_sia_funding"
+    PENDING_LIQUIDATION_OF_PREVIOUS_SIA_FUNDING = (
+        "PENDING_LIQUIDATION_OF_PREVIOUS_SIA_FUNDING",
+        _("pending_liquidation_of_previous_sia_funding"),
     )
 
 
@@ -134,7 +146,7 @@ class RoundScope(models.Model):
     )
     round = models.ForeignKey("Round", on_delete=models.CASCADE, related_name="scopes")
 
-    vaccine = models.CharField(max_length=5, choices=VACCINES, blank=True)
+    vaccine = models.CharField(max_length=12, choices=VACCINES, blank=True)
 
     class Meta:
         unique_together = [("round", "vaccine")]
@@ -152,7 +164,7 @@ class CampaignScope(models.Model):
         Group, on_delete=models.CASCADE, related_name="campaignScope", default=make_group_campaign_scope
     )
     campaign = models.ForeignKey("Campaign", on_delete=models.CASCADE, related_name="scopes")
-    vaccine = models.CharField(max_length=5, choices=VACCINES, blank=True)
+    vaccine = models.CharField(max_length=12, choices=VACCINES, blank=True)
 
     class Meta:
         unique_together = [("campaign", "vaccine")]
@@ -173,8 +185,6 @@ class RoundDateHistoryEntry(models.Model):
     previous_ended_at = models.DateField(null=True, blank=True)
     started_at = models.DateField(null=True, blank=True)
     ended_at = models.DateField(null=True, blank=True)
-    # Deprecated. Cannot be deleted until the PowerBI dashboards are updated to use reason_for_delay instead
-    reason = models.CharField(null=True, blank=True, choices=DelayReasons.choices, max_length=200)
     reason_for_delay = models.ForeignKey(
         "ReasonForDelay", on_delete=models.PROTECT, null=True, blank=True, related_name="round_history_entries"
     )
@@ -242,6 +252,16 @@ class RoundQuerySet(models.QuerySet):
         data["campaigns"] = data["campaigns"].values()
         return data
 
+    def filter_by_vaccine_name(self, vaccine_name):
+        return (
+            self.select_related("campaign")
+            .prefetch_related("scopes", "campaign__scopes")
+            .filter(
+                (Q(campaign__separate_scopes_per_round=False) & Q(campaign__scopes__vaccine=vaccine_name))
+                | (Q(campaign__separate_scopes_per_round=True) & Q(scopes__vaccine=vaccine_name))
+            )
+        )
+
 
 def make_group_subactivity_scope():
     return Group.objects.create(name="hidden subactivityScope")
@@ -255,7 +275,7 @@ class SubActivityScope(models.Model):
     )
     subactivity = models.ForeignKey("SubActivity", on_delete=models.CASCADE, related_name="scopes")
 
-    vaccine = models.CharField(max_length=5, choices=VACCINES, blank=True)
+    vaccine = models.CharField(max_length=12, choices=VACCINES, blank=True)
 
 
 AGE_UNITS = [
@@ -272,12 +292,36 @@ class SubActivity(models.Model):
     age_max = models.IntegerField(null=True, blank=True)
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
+    im_started_at = models.DateField(null=True, blank=True)
+    im_ended_at = models.DateField(null=True, blank=True)
+    lqas_started_at = models.DateField(null=True, blank=True)
+    lqas_ended_at = models.DateField(null=True, blank=True)
 
     class Meta:
         verbose_name_plural = "subactivities"
 
     def __str__(self):
         return self.name
+
+    @property
+    def vaccine_list(self):
+        all_vaccines = self.scopes.all().values_list("vaccine", flat=True)
+        vaccines = set()
+        vaccines.update(all_vaccines)
+        return sorted(list(vaccines))
+
+    @property
+    def vaccine_names(self):
+        return ", ".join(self.vaccine_list)
+
+    @property
+    def single_vaccine_list(self):
+        vaccines = set(self.vaccine_list)
+        return sorted(list(Campaign.split_combined_vaccines(vaccines)))
+
+    @property
+    def single_vaccine_names(self):
+        return ", ".join(self.single_vaccine_list)
 
 
 class Round(models.Model):
@@ -322,6 +366,7 @@ class Round(models.Model):
     main_awareness_problem = models.CharField(max_length=255, null=True, blank=True)
     lqas_district_passing = models.IntegerField(null=True, blank=True)
     lqas_district_failing = models.IntegerField(null=True, blank=True)
+    is_test = models.BooleanField(default=False)
 
     # Preparedness
     preparedness_spreadsheet_url = models.URLField(null=True, blank=True)
@@ -344,6 +389,36 @@ class Round(models.Model):
 
     objects = models.Manager.from_queryset(RoundQuerySet)()
 
+    def delete(self, *args, **kwargs):
+        # Explicitly delete groups related to the round's scopes, because the cascade deletion won't work reliably
+        Group.objects.filter(roundScope__isnull=False).filter(
+            roundScope__id__in=Subquery(self.scopes.all().values_list("id", flat=True))
+        ).delete()
+
+        # Call the parent class's delete() method to proceed with deleting the Round
+        # The scope will be deleted by Django's cascading
+        super().delete(*args, **kwargs)
+
+    def add_chronogram(self):
+        """
+        Create a "standard chronogram" for all upcoming rounds of a campaign.
+        See POLIO-1781.
+        """
+        from plugins.polio.models import ChronogramTemplateTask
+
+        if isinstance(self.started_at, datetime.datetime):
+            self.started_at = self.started_at.date()
+
+        if (
+            self.started_at
+            and isinstance(self.started_at, datetime.date)
+            and self.started_at >= timezone.now().date()
+            and self.campaign
+            and self.campaign.has_polio_type
+            and not self.chronograms.valid().exists()
+        ):
+            ChronogramTemplateTask.objects.create_chronogram(round=self, created_by=None, account=self.campaign.account)
+
     def get_item_by_key(self, key):
         return getattr(self, key)
 
@@ -353,20 +428,96 @@ class Round(models.Model):
             return False
         return round.ended_at < date.today()
 
-    def vaccine_names(self):
-        # only take into account scope which have orgunit attached
-        campaign = self.campaign
+    @property
+    def actual_scopes(self):
+        """The scopes that actually apply to the round.
+        Can be used to get the shapes of the actual scope, but not the vaccines, since sub-activities are not included.
+        To get all vaccines applicable for the round, use vaccines_list_extended or vaccine_names_extended properties.
+        Would need manual serializing for use in APIs because the CampaignScope and RoundScope are different models
+        """
+        if self.campaign.separate_scopes_per_round:
+            return self.scopes
+        return self.campaign.scopes
 
-        if campaign.separate_scopes_per_round:
-            scopes_with_orgunits = filter(
-                lambda s: len(s.group.org_units.all()) > 0 and s.vaccine is not None, self.scopes.all()
-            )
-            return ", ".join(scope.vaccine for scope in scopes_with_orgunits)
+    @property
+    def vaccine_list(self):
+        """Vaccines used for the round. Not including sub-activities"""
+        vaccines = set()
+        if self.campaign.separate_scopes_per_round:
+            round_vaccines = RoundScope.objects.filter(
+                round=self, group__org_units__isnull=False, vaccine__isnull=False
+            ).values_list("vaccine", flat=True)
+
+            vaccines.update(round_vaccines)
+
         else:
-            scopes_with_orgunits = filter(
-                lambda s: len(s.group.org_units.all()) > 0 and s.vaccine is not None, self.campaign.scopes.all()
-            )
-            return ",".join(scope.vaccine for scope in scopes_with_orgunits)
+            campaign_vaccines = CampaignScope.objects.filter(
+                campaign=self.campaign, group__org_units__isnull=False, vaccine__isnull=False
+            ).values_list("vaccine", flat=True)
+
+            vaccines.update(campaign_vaccines)
+
+        return sorted(list(vaccines))
+
+    @property
+    def single_vaccine_list(self):
+        vaccines = set(self.vaccine_list)
+        return sorted(list(Campaign.split_combined_vaccines(vaccines)))
+
+    @property
+    def vaccine_names(self):
+        """Vaccines used for the round, in string form for easy use in API. Not including sub-activities"""
+        return ", ".join(sorted(list(self.vaccine_list)))
+
+    @property
+    def single_vaccine_names(self):
+        """Vaccines used for the round, splitting type bOPV & nOPV2 into it's component vaccines.
+        In string form for easy use in API.
+        Not including sub-activities"""
+        return ", ".join(sorted(list(self.single_vaccine_list)))
+
+    @property
+    def subactivities_vaccine_list(self):
+        vaccines = set()
+
+        subactivity_vaccines = SubActivityScope.objects.filter(
+            subactivity__round=self, group__org_units__isnull=False, vaccine__isnull=False
+        ).values_list("vaccine", flat=True)
+
+        vaccines.update(subactivity_vaccines)
+        return sorted(list(vaccines))
+
+    @property
+    def subactivities_single_vaccine_list(self):
+        return sorted(list(Campaign.split_combined_vaccines(set(self.subactivities_vaccine_list))))
+
+    @property
+    def subactivities_vaccine_names(self):
+        return ", ".join(self.subactivities_vaccine_list)
+
+    @property
+    def subactivities_single_vaccine_names(self):
+        return ", ".join(self.subactivities_single_vaccine_list)
+
+    @property
+    def vaccine_list_extended(self):
+        """list of vaccines including from sub-activities"""
+        vaccines = set()
+        vaccines.update(self.vaccine_list)
+        vaccines.update(self.subactivities_vaccine_list)
+        return sorted(list(vaccines))
+
+    @property
+    def single_vaccine_list_extended(self):
+        return sorted(list(Campaign.split_combined_vaccines(set(self.vaccine_list_extended))))
+
+    @property
+    def vaccine_names_extended(self):
+        return ", ".join(self.vaccine_list_extended)
+
+    @property
+    def single_vaccine_names_extended(self):
+        return ", ".join(self.single_vaccine_list_extended)
 
     @property
     def districts_count_calculated(self):
@@ -515,7 +666,7 @@ class Campaign(SoftDeletableModel):
         verbose_name=_("PV2 Notification"),
     )
 
-    virus = models.CharField(max_length=12, choices=VIRUSES, null=True, blank=True)
+    virus = models.CharField(max_length=15, choices=VIRUSES, null=True, blank=True)
 
     # Detection.
     detection_status = models.CharField(default="PENDING", max_length=10, choices=STATUS)
@@ -556,6 +707,8 @@ class Campaign(SoftDeletableModel):
     )
     verification_score = models.IntegerField(null=True, blank=True)
     # END OF Risk assessment field
+
+    # Unusable vials leftover 14 days after the last round ends
 
     # ----------------------------------------------------------------------------------------
     # START fields moved to the `Budget` model. **********************************************
@@ -620,64 +773,12 @@ class Campaign(SoftDeletableModel):
     # END fields moved to the `Budget` model. ************************************************
     # ----------------------------------------------------------------------------------------
 
-    # ----------------------------------------------------------------------------------------
-    # START deprecated fields. ***************************************************************
-    cvdpv_notified_at = models.DateField(
-        null=True,
-        blank=True,
-        verbose_name=_("cVDPV Notification"),
-    )
-    # Replaced by the vaccines property.
-    vacine = models.CharField(max_length=5, choices=VACCINES, null=True, blank=True)
-    # Deprecated
-    detection_rrt_oprtt_approval_at = models.DateField(
-        null=True,
-        blank=True,
-        verbose_name=_("RRT/OPRTT Approval"),
-    )
-    # Moved to round.
-    doses_requested = models.IntegerField(null=True, blank=True)
-    # Preparedness deprecated fields -> Moved to round
-    preperadness_spreadsheet_url = models.URLField(null=True, blank=True)
-    preperadness_sync_status = models.CharField(max_length=10, default="FINISHED", choices=PREPAREDNESS_SYNC_STATUS)
-    # Budget deprecated fields.
-    budget_requested_at_WFEDITABLE_old = models.DateField(null=True, blank=True)
-    feedback_sent_to_rrt3_at_WFEDITABLE_old = models.DateField(null=True, blank=True)
-    re_submitted_to_orpg_at_WFEDITABLE_old = models.DateField(null=True, blank=True)
-    budget_responsible = models.CharField(max_length=10, choices=RESPONSIBLES, null=True, blank=True)
-    last_budget_event = models.ForeignKey(
-        "BudgetEvent", null=True, blank=True, on_delete=models.SET_NULL, related_name="lastbudgetevent"
-    )
-    # Removed in PR POLIO-614.
-    eomg = models.DateField(
-        null=True,
-        blank=True,
-        verbose_name=_("EOMG"),
-    )
-    # Moved to Rounds
-    round_one = models.OneToOneField(
-        Round, on_delete=models.PROTECT, related_name="campaign_round_one", null=True, blank=True
-    )
-    round_two = models.OneToOneField(
-        Round, on_delete=models.PROTECT, related_name="campaign_round_two", null=True, blank=True
-    )
-    # budget form, DEPRECATED
-    budget_rrt_oprtt_approval_at = models.DateField(
-        null=True,
-        blank=True,
-        verbose_name=_("Budget Approval"),
-    )
-    # budget form, DEPRECATED.
-    budget_submitted_at = models.DateField(
-        null=True,
-        blank=True,
-        verbose_name=_("Budget Submission"),
-    )
-    # END deprecated fields. *****************************************************************
-    # ----------------------------------------------------------------------------------------
-
     def __str__(self):
         return f"{self.epid} {self.obr_name}"
+
+    @property
+    def has_polio_type(self) -> bool:
+        return self.campaign_types.filter(name=CampaignType.POLIO).exists()
 
     def get_item_by_key(self, key):
         return getattr(self, key)
@@ -797,48 +898,145 @@ class Campaign(SoftDeletableModel):
         super().save(*args, **kwargs)
 
     @property
-    def vaccines(self):
-        # only take into account scope which have orgunit attached
+    def campaign_level_vaccines_list(self):
+        """Vaccine types from campaign level scopes.
+        Combined type nOPV2&bOPV2 is treated as separate from its components nOPV2 and bOPV2"""
+
         if self.separate_scopes_per_round:
-            vaccines = set()
-            for round in self.rounds.all():
-                scopes_with_orgunits = filter(
-                    lambda s: len(s.group.org_units.all()) > 0 and s.vaccine is not None, round.scopes.all()
-                )
-                for scope in scopes_with_orgunits:
-                    vaccines.add(scope.vaccine)
-            return ", ".join(sorted(vaccines))
-        else:
-            scopes_with_orgunits = filter(
-                lambda s: len(s.group.org_units.all()) > 0 and s.vaccine is not None, self.scopes.all()
-            )
-            return ",".join(sorted({scope.vaccine for scope in scopes_with_orgunits}))
+            return []
 
-    def vaccine_names(self):
-        # only take into account scope which have orgunit attached and vaccine is not None
-        scopes_with_orgunits_and_vaccine = filter(
-            lambda s: len(s.group.org_units.all()) > 0 and s.vaccine is not None, self.scopes.all()
-        )
+        vaccines = set()
 
-        vaccine_names = sorted({scope.vaccine for scope in scopes_with_orgunits_and_vaccine})
-        return ", ".join(vaccine_names)
+        campaign_vaccines = CampaignScope.objects.filter(
+            campaign=self, group__org_units__isnull=False, vaccine__isnull=False
+        ).values_list("vaccine", flat=True)
 
-    def get_round_one(self):
-        try:
-            round = self.rounds.get(number=1)
-            return round
-        except Round.DoesNotExist:
-            return None
+        vaccines.update(campaign_vaccines)
+        return sorted(list(vaccines))
 
-    def get_round_two(self):
-        try:
-            round = self.rounds.get(number=2)
-            return round
-        except Round.DoesNotExist:
-            return None
+    @property
+    def campaign_level_single_vaccines_list(self):
+        """Same as self.campaign_level_vaccines_list, but the vaccine type nOPV2&bOPV2 is split.
+        So a campaign with nOPV2 and nOPV2&bOPV2 in its scopes will only have 2 elements in the list.
+        Useful when dealing with actual vaccines, eg: vaccine stocks
+
+        """
+        vaccines = set(self.campaign_level_vaccines_list)
+        return sorted(list(self.split_combined_vaccines(vaccines)))
+
+    @property
+    def round_level_vaccines_list(self):
+        """vaccines from round level scopes, excluding subactivities
+        Combined type nOPV2&bOPV2 is treated as separate from its components nOPV2 and bOPV2"""
+        if not self.separate_scopes_per_round:
+            return []
+
+        vaccines = set()
+        rnds = self.rounds.all().values("id")
+
+        round_vaccines = RoundScope.objects.filter(
+            round__id__in=Subquery(rnds), group__org_units__isnull=False, vaccine__isnull=False
+        ).values_list("vaccine", flat=True)
+
+        vaccines.update(round_vaccines)
+        return sorted(list(vaccines))
+
+    @property
+    def round_level_single_vaccines_list(self):
+        """Same as self.round_level_vaccines_list, but the vaccine type nOPV2&bOPV2 is split.
+        So a campaign with nOPV2 and nOPV2&bOPV2 in its scopes will only have 2 elements in the list.
+        Useful when dealing with actual vaccines, eg: vaccine stocks
+        """
+        vaccines = set(self.round_level_vaccines_list)
+        return sorted(list(self.split_combined_vaccines(vaccines)))
+
+    @property
+    def sub_activity_level_vaccines_list(self):
+        """List of vaccines from sub-activities scopes (excluding parent round scopes)
+        Combined type nOPV2&bOPV2 is treated as separate from its components nOPV2 and bOPV2"""
+        vaccines = set()
+        rnds = self.rounds.all().values("id")
+
+        subactivity_vaccines = SubActivityScope.objects.filter(
+            subactivity__round__id__in=Subquery(rnds), group__org_units__isnull=False, vaccine__isnull=False
+        ).values_list("vaccine", flat=True)
+
+        vaccines.update(subactivity_vaccines)
+        return sorted(list(vaccines))
+
+    @property
+    def sub_activity_level_single_vaccines_list(self):
+        """Same as self.sub_activity_level_vaccines_list, but the vaccine type nOPV2&bOPV2 is split.
+        So a campaign with nOPV2 and nOPV2&bOPV2 in its scopes will only have 2 elements in the list.
+        Useful when dealing with actual vaccines, eg: vaccine stocks
+
+        """
+        vaccines = set(self.sub_activity_level_vaccines_list)
+        return sorted(list(self.split_combined_vaccines(vaccines)))
+
+    @property
+    def vaccines_extended_list(self):
+        vaccines = set()
+        vaccines.update(self.campaign_level_vaccines_list)
+        vaccines.update(self.round_level_vaccines_list)
+        return sorted(list(vaccines))
+
+    @property
+    def vaccines_full_list(self):
+        vaccines = set()
+        vaccines.update(self.campaign_level_vaccines_list)
+        vaccines.update(self.round_level_vaccines_list)
+        vaccines.update(self.sub_activity_level_vaccines_list)
+        return sorted(list(vaccines))
+
+    @property
+    def single_vaccines_extended_list(self):
+        """Same as self.vaccines_extended_list, but the vaccine type nOPV2&bOPV2 is split.
+        So a campaign with nOPV2 and nOPV2&bOPV2 in its scopes will only have 2 elements in the list.
+        Useful when dealing with actual vaccines, eg: vaccine stocks
+        """
+        vaccines = set(self.vaccines_extended_list)
+        return sorted(list(self.split_combined_vaccines(vaccines)))
+
+    @property
+    def single_vaccines_full_list(self):
+        """Same as self.single_vaccines_full_list, but includes sub_activities"""
+        vaccines = set(self.vaccines_full_list)
+        return sorted(list(self.split_combined_vaccines(vaccines)))
+
+    # deprecated
+    # equivalent to vaccines_extended
+    # currently used in preparedness
+    @property
+    def vaccines(self):
+        return ", ".join(self.vaccines_extended_list)
+
+    @property
+    def vaccines_extended(self):
+        return ", ".join(self.vaccines_extended_list)
+
+    @property
+    def vaccines_full(self):
+        return ", ".join(self.vaccines_full_list)
+
+    @property
+    def single_vaccines_extended(self):
+        return ", ".join(self.single_vaccines_extended_list)
+
+    @property
+    def single_vaccines_full(self):
+        return ", ".join(self.single_vaccines_full_list)
+
+    @staticmethod
+    def split_combined_vaccines(vaccines):
+        if VACCINES[3][0] in vaccines:
+            vaccines.remove(VACCINES[3][0])
+            vaccines.add(VACCINES[1][0])
+            vaccines.add(VACCINES[2][0])
+        return vaccines
 
     def update_geojson_field(self):
-        "Update the geojson field on the campaign DO NOT TRIGGER the save() you have to do it manually"
+        "Update the geojson field on the campaign DOES NOT TRIGGER the save() you have to do it manually"
         campaign = self
         features = []
         if not self.separate_scopes_per_round:
@@ -1020,14 +1218,6 @@ class BudgetEvent(SoftDeletableModel):
     def __str__(self):
         return str(self.campaign)
 
-    def save(self, *args, **kwargs):
-        super(BudgetEvent, self).save(*args, **kwargs)
-        if self.campaign.last_budget_event is None:
-            self.campaign.last_budget_event = self
-        elif self.campaign.last_budget_event.created_at < self.created_at:
-            self.campaign.last_budget_event = self
-        self.campaign.save()
-
 
 # Deprecated
 class BudgetFiles(models.Model):
@@ -1102,9 +1292,17 @@ class VaccineRequestFormType(models.TextChoices):
 
 
 class VaccineRequestForm(SoftDeletableModel):
-    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE)
-    vaccine_type = models.CharField(max_length=5, choices=VACCINES)
-    rounds = models.ManyToManyField(Round)
+    class Meta:
+        indexes = [
+            models.Index(fields=["campaign", "vaccine_type"]),  # Frequently filtered together
+            models.Index(fields=["vrf_type"]),  # Filtered in repository_forms.py
+            models.Index(fields=["created_at"]),  # Used for ordering
+            models.Index(fields=["updated_at"]),  # Used for ordering
+        ]
+
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, db_index=True)
+    vaccine_type = models.CharField(max_length=30, choices=INDIVIDUAL_VACCINES)
+    rounds = models.ManyToManyField(Round, db_index=True)
     date_vrf_signature = models.DateField(null=True, blank=True)
     date_vrf_reception = models.DateField(null=True, blank=True)
     date_dg_approval = models.DateField(null=True, blank=True)
@@ -1183,6 +1381,13 @@ class VaccinePreAlert(models.Model):
     def get_doses_per_vial(self):
         return DOSES_PER_VIAL[self.request_form.vaccine_type]
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["request_form", "estimated_arrival_time"]),  # Used together in queries
+            models.Index(fields=["po_number"]),  # Unique field that's queried
+            models.Index(fields=["date_pre_alert_reception"]),  # Used for filtering/ordering
+        ]
+
 
 class VaccineArrivalReport(models.Model):
     request_form = models.ForeignKey(VaccineRequestForm, on_delete=models.CASCADE)
@@ -1218,8 +1423,16 @@ class VaccineArrivalReport(models.Model):
 
         super().save(*args, **kwargs)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["request_form", "arrival_report_date"]),  # Frequently queried together
+            models.Index(fields=["po_number"]),  # Unique field that's queried
+            models.Index(fields=["doses_received"]),  # Used in aggregations
+        ]
+
 
 class VaccineStock(models.Model):
+    MANAGEMENT_DAYS_OPEN = 7
     account = models.ForeignKey("iaso.account", on_delete=models.CASCADE, related_name="vaccine_stocks")
     country = models.ForeignKey(
         "iaso.orgunit",
@@ -1229,17 +1442,58 @@ class VaccineStock(models.Model):
         related_name="vaccine_stocks",
         help_text="Unique (Country, Vaccine) pair",
     )
-    vaccine = models.CharField(max_length=5, choices=VACCINES)
+    vaccine = models.CharField(max_length=12, choices=VACCINES)
 
     class Meta:
         unique_together = ("country", "vaccine")
+        indexes = [
+            models.Index(fields=["country", "vaccine"]),  # Already unique_together, but used in many queries
+            models.Index(fields=["account"]),  # Frequently filtered by account
+        ]
 
     def __str__(self):
         return f"{self.country} - {self.vaccine}"
 
 
+class VaccineStockHistoryQuerySet(models.QuerySet):
+    def filter_for_user(self, user: Optional[Union[User, AnonymousUser]]):
+        if not user or not user.is_authenticated:
+            raise UserNotAuthError("User not Authenticated")
+
+        profile = user.iaso_profile
+        self = self.filter(vaccine_stock__account=profile.account)
+
+        return self
+
+
+class VaccineStockHistory(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    vaccine_stock = models.ForeignKey(VaccineStock, on_delete=models.CASCADE, related_name="history")
+    round = models.ForeignKey(Round, on_delete=models.CASCADE, related_name="stock_on_closing")
+    unusable_vials_in = models.IntegerField(null=True)
+    unusable_vials_out = models.IntegerField(null=True)
+    unusable_doses_in = models.IntegerField(null=True)
+    unusable_doses_out = models.IntegerField(null=True)
+    usable_vials_in = models.IntegerField(null=True)
+    usable_vials_out = models.IntegerField(null=True)
+    usable_doses_in = models.IntegerField(null=True)
+    usable_doses_out = models.IntegerField(null=True)
+
+    objects = models.Manager.from_queryset(VaccineStockHistoryQuerySet)()
+
+    class Meta:
+        unique_together = ("round", "vaccine_stock")
+
+
 # Form A
 class OutgoingStockMovement(models.Model):
+    class Meta:
+        indexes = [
+            models.Index(fields=["vaccine_stock", "campaign"]),  # Frequently queried together
+            models.Index(fields=["form_a_reception_date"]),  # Used in ordering
+            models.Index(fields=["report_date"]),  # Used in filtering/ordering
+        ]
+
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE)
     round = models.ForeignKey(Round, on_delete=models.CASCADE, null=True, blank=True)
     vaccine_stock = models.ForeignKey(
@@ -1256,6 +1510,9 @@ class OutgoingStockMovement(models.Model):
         storage=CustomPublicStorage(), upload_to="public_documents/forma/", null=True, blank=True
     )
 
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
 
 class DestructionReport(models.Model):
     vaccine_stock = models.ForeignKey(VaccineStock, on_delete=models.CASCADE)
@@ -1270,6 +1527,15 @@ class DestructionReport(models.Model):
         storage=CustomPublicStorage(), upload_to="public_documents/destructionreport/", null=True, blank=True
     )
 
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["vaccine_stock", "destruction_report_date"]),  # Used together in queries
+            models.Index(fields=["rrt_destruction_report_reception_date"]),  # Used in filtering
+        ]
+
 
 class IncidentReport(models.Model):
     class StockCorrectionChoices(models.TextChoices):
@@ -1278,7 +1544,8 @@ class IncidentReport(models.Model):
         LOSSES = "losses", _("Losses")
         RETURN = "return", _("Return")
         STEALING = "stealing", _("Stealing")
-        PHYSICAL_INVENTORY = "physical_inventory", _("Physical Inventory")
+        PHYSICAL_INVENTORY_ADD = "physical_inventory_add", _("Add to Physical Inventory")
+        PHYSICAL_INVENTORY_REMOVE = "physical_inventory_remove", _("remove from Physical Inventory")
         BROKEN = "broken", _("Broken")
         UNREADABLE_LABEL = "unreadable_label", _("Unreadable label")
 
@@ -1297,6 +1564,75 @@ class IncidentReport(models.Model):
     document = models.FileField(
         storage=CustomPublicStorage(), upload_to="public_documents/incidentreport/", null=True, blank=True
     )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["vaccine_stock", "date_of_incident_report"]),  # Frequently queried together
+            models.Index(fields=["incident_report_received_by_rrt"]),  # Used in filtering
+        ]
+
+
+class EarmarkedStock(models.Model):
+    class EarmarkedStockChoices(models.TextChoices):
+        CREATED = "created", _("Created")  #     1. Usable -> Earmark
+        USED = "used", _("Used")  #     2. Earmarked -> Used
+        RETURNED = "returned", _("Returned")  #     3. Earmark -> Usable
+
+    earmarked_stock_type = models.CharField(
+        max_length=20, choices=EarmarkedStockChoices.choices, default=EarmarkedStockChoices.CREATED
+    )
+    vaccine_stock = models.ForeignKey(VaccineStock, on_delete=models.CASCADE, related_name="earmarked_stocks")
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE)
+    round = models.ForeignKey(Round, on_delete=models.CASCADE)
+    form_a = models.ForeignKey(
+        OutgoingStockMovement, on_delete=models.CASCADE, null=True, blank=True, related_name="earmarked_stocks"
+    )
+
+    vials_earmarked = models.PositiveIntegerField()
+    doses_earmarked = models.PositiveIntegerField()
+
+    comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["vaccine_stock", "campaign"]),
+            models.Index(fields=["created_at"]),
+            models.Index(fields=["round"]),
+        ]
+
+    def __str__(self):
+        return f"Earmarked {self.vials_earmarked} vials for {self.campaign.obr_name} Round {self.round.number}"
+
+    @classmethod
+    def get_available_vials_count(cls, vaccine_stock: VaccineStock, _round: Round):
+        matching_earmarks_plus = EarmarkedStock.objects.filter(
+            vaccine_stock=vaccine_stock,
+            campaign=_round.campaign,
+            round=_round,
+            earmarked_stock_type=EarmarkedStock.EarmarkedStockChoices.CREATED,
+        )
+
+        matching_earmarks_minus = EarmarkedStock.objects.filter(
+            vaccine_stock=vaccine_stock,
+            campaign=_round.campaign,
+            round=_round,
+            earmarked_stock_type__in=[
+                EarmarkedStock.EarmarkedStockChoices.USED,
+                EarmarkedStock.EarmarkedStockChoices.RETURNED,
+            ],
+        )
+
+        total_vials_usable_plus = matching_earmarks_plus.aggregate(total=Sum("vials_earmarked"))["total"] or 0
+        total_vials_usable_minus = matching_earmarks_minus.aggregate(total=Sum("vials_earmarked"))["total"] or 0
+
+        total_vials_usable = total_vials_usable_plus - total_vials_usable_minus
+
+        return total_vials_usable
 
 
 class Notification(models.Model):
@@ -1331,8 +1667,9 @@ class Notification(models.Model):
         WPV1 = "wpv1", _("WPV1")
 
     class Sources(models.TextChoices):
-        AFP = "accute_flaccid_paralysis", _(
-            "Accute Flaccid Paralysis"
+        AFP = (
+            "accute_flaccid_paralysis",
+            _("Accute Flaccid Paralysis"),
         )  # A case of someone who got paralyzed because of polio.
         CC = "contact_case", _("Contact Case")
         COMMUNITY = "community", _("Community")

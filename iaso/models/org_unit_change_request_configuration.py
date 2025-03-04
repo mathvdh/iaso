@@ -19,7 +19,7 @@ from iaso.utils.models.soft_deletable import (
 class OrgUnitChangeRequestConfigurationQuerySet(QuerySet):
     def filter_for_user(self, user: typing.Optional[typing.Union[User, AnonymousUser]]):
         if not user or not user.is_authenticated:
-            raise UserNotAuthError(f"User not Authenticated")
+            raise UserNotAuthError("User not Authenticated")
 
         profile = user.iaso_profile
         return self.filter(project__account=profile.account)
@@ -33,7 +33,7 @@ class OrgUnitChangeRequestConfiguration(SoftDeletableModel):
     or restrict the list of possible values for each field.
     """
 
-    project = models.ForeignKey("Project", on_delete=models.PROTECT)
+    project = models.ForeignKey("Project", on_delete=models.CASCADE)
     org_unit_type = models.ForeignKey("OrgUnitType", on_delete=models.PROTECT)
     org_units_editable = models.BooleanField(default=True)  # = is it possible to edit org units of that type
     editable_fields = ArrayField(

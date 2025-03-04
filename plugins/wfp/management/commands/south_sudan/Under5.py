@@ -1,9 +1,11 @@
 import logging
+
 from itertools import groupby
 from operator import itemgetter
 
 from plugins.wfp.common import ETL
 from plugins.wfp.models import *
+
 
 logger = logging.getLogger(__name__)
 
@@ -136,18 +138,21 @@ class Under5:
 
         return ETL().save_entity_journey(journey, beneficiary, record, "U5")
 
-    def run(self):
-        entity_type = ETL(["child_under_5_1"])
+    def run(self, type):
+        entity_type = ETL([type])
         account = entity_type.account_related_to_entity_type()
         beneficiaries = entity_type.retrieve_entities()
-        logger.info(f"Instances linked to Child Under 5 program: {beneficiaries.count()}")
+        logger.info(f"Instances linked to Child Under 5 program: {beneficiaries.count()} for {account}")
         entities = sorted(list(beneficiaries), key=itemgetter("entity_id"))
         existing_beneficiaries = ETL().existing_beneficiaries()
         instances = self.group_visit_by_entity(entities)
 
+        # Cleaning monthly statistics then update the table with fresh data
+        MonthlyStatistics.objects.all().filter(account=account, programme_type="U5").delete()
+
         for index, instance in enumerate(instances):
             logger.info(
-                f"---------------------------------------- Beneficiary N° {(index+1)} {instance['entity_id']}-----------------------------------"
+                f"---------------------------------------- Beneficiary N° {(index + 1)} {instance['entity_id']}-----------------------------------"
             )
             instance["journey"] = self.journeyMapper(instance["visits"], ["Anthropometric visit child"])
             beneficiary = Beneficiary()
@@ -161,7 +166,7 @@ class Under5:
                 beneficiary.entity_id = instance["entity_id"]
                 beneficiary.account = account
                 beneficiary.save()
-                logger.info(f"Created new beneficiary")
+                logger.info("Created new beneficiary")
             else:
                 beneficiary = Beneficiary.objects.filter(entity_id=instance["entity_id"]).first()
 
@@ -181,5 +186,5 @@ class Under5:
                     else:
                         logger.info("No new journey")
                 logger.info(
-                    f"---------------------------------------------------------------------------------------------\n\n"
+                    "---------------------------------------------------------------------------------------------\n\n"
                 )

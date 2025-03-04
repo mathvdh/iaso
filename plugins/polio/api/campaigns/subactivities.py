@@ -34,6 +34,10 @@ class SubActivityCreateUpdateSerializer(serializers.ModelSerializer):
             "age_unit",
             "age_min",
             "age_max",
+            "lqas_ended_at",
+            "lqas_started_at",
+            "im_ended_at",
+            "im_started_at",
         ]
 
     def create(self, validated_data):
@@ -61,7 +65,9 @@ class SubActivityCreateUpdateSerializer(serializers.ModelSerializer):
             group_org_units = group_data.pop("org_units", [])
             group = Group.objects.create(**group_data)
             group.org_units.set(group_org_units)
-            SubActivityScope.objects.create(subactivity=sub_activity, group=group, **scope_data)
+            new_scope = SubActivityScope.objects.create(subactivity=sub_activity, group=group, **scope_data)
+            group.name = f"scope {new_scope.id} for sub-activity {sub_activity.id} for round {round_number} of campaign {campaign}"
+            group.save()
 
         return sub_activity
 
@@ -97,7 +103,21 @@ class SubActivityListDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SubActivity
-        fields = ["id", "round_id", "name", "start_date", "end_date", "scopes", "age_unit", "age_min", "age_max"]
+        fields = [
+            "id",
+            "round_id",
+            "name",
+            "start_date",
+            "end_date",
+            "scopes",
+            "age_unit",
+            "age_min",
+            "age_max",
+            "lqas_ended_at",
+            "lqas_started_at",
+            "im_ended_at",
+            "im_started_at",
+        ]
 
 
 class SubActivityViewSet(ModelViewSet):

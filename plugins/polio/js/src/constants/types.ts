@@ -4,7 +4,6 @@ import {
     Nullable,
 } from '../../../../../hat/assets/js/apps/Iaso/types/utils';
 import { Profile } from '../../../../../hat/assets/js/apps/Iaso/utils/usersUtils';
-import { ReasonForDelay } from '../domains/Campaigns/Rounds/ReasonForDelayModal/hooks/reasons';
 import { SubActivityFormValues } from '../domains/Campaigns/SubActivities/types';
 
 export type FormatForNFMArgs<T> = {
@@ -167,7 +166,8 @@ export type CampaignFieldType =
     | 'hidden'
     | 'xml-external';
 
-export type Vaccine = 'nOPV2' | 'bOPV' | 'mOPV2';
+export type Vaccine = 'nOPV2' | 'bOPV' | 'mOPV2' | 'nOPV2 & bOPV';
+export type VaccineForStock = 'nOPV2' | 'bOPV' | 'mOPV2';
 
 export type Virus = 'PV1' | 'PV2' | 'PV3' | 'cVDPV2' | 'WPV1';
 
@@ -252,7 +252,6 @@ export type RoundDateHistoryEntry = {
     previous_ended_at: string; // DATE
     started_at: string; // DATE
     ended_at: string; // DATE
-    reason?: ReasonForDelay;
     reason_for_delay: number; // an id
     user: { first_name: string; last_name: string; username: string };
     created_at: string; // DATE
@@ -260,6 +259,7 @@ export type RoundDateHistoryEntry = {
 
 export type Round = {
     id: number;
+    vaccine_names_extended: string;
     started_at: Nullable<string>;
     ended_at: Nullable<string>;
     mop_up_started_at: Nullable<string>; // date
@@ -303,13 +303,54 @@ export type Round = {
     datelogs: RoundDateHistoryEntry[];
 };
 
+type CalendarRound = {
+    id: number;
+    number: number;
+    started_at: string;
+    ended_at: string;
+    vaccine_names: string;
+    target_population: Nullable<number>;
+    scopes: Scope[];
+};
+
+type CalendarSubActivity = {
+    id: number;
+    name: string;
+    scopes: Scope[];
+    start_date: string;
+    end_date: string;
+    vaccine_names: string;
+    round_number: number;
+};
+
+export type CalendarCampaign = {
+    id: string;
+    epid: Nullable<string>;
+    scopes: Scope[];
+    obr_name: string;
+    vaccines: string;
+    account: number;
+    top_level_org_unit_name: string;
+    top_level_org_unit_id: number;
+    rounds: Array<CalendarRound>;
+    sub_activities: Array<CalendarSubActivity>;
+    is_preventive: boolean;
+    general_status: string;
+    grouped_campaigns: number[];
+    separate_scopes_per_round: boolean;
+
+    single_vaccines: string;
+    campaign_types: CampaignType[];
+    description: string;
+    is_test: boolean;
+};
+
 export type Campaign = {
     id: string;
     created_at: string;
     updated_at: string;
     deleted_at: Nullable<string>;
-    round_one?: any[];
-    round_two?: any[];
+    single_vaccines?: string;
     rounds: Round[];
     org_unit: {
         id: number;
@@ -340,12 +381,10 @@ export type Campaign = {
     creation_email_sent_at: Nullable<string>; // date time
     onset_at: Nullable<string>; // date
     outbreak_declaration_date: Nullable<string>; // date
-    cvdpv_notified_at: Nullable<string>; // date
     cvdpv2_notified_at: Nullable<string>; // date
     pv_notified_at: Nullable<string>; // date
     pv2_notified_at: Nullable<string>; // date
     virus: Nullable<Virus>;
-    vacine: Nullable<Vaccine>;
     detection_status: DetectionStatus;
     detection_responsible: Nullable<DetectionResponsible>;
     detection_first_draft_submitted_at: Nullable<string>; // date
@@ -358,11 +397,9 @@ export type Campaign = {
     ag_nopv_group_met_at: Nullable<string>; // date
     dg_authorized_at: Nullable<string>; // date
     verification_score: Nullable<number>;
-    doses_requested: Nullable<number>;
     preparedness_spreadsheet_url: Nullable<string>;
     preparedness_sync_status: PreparednessSyncStatus;
     budget_status: Nullable<BudgetStatusDeprecated>;
-    budget_responsible: Nullable<ResponsibleLevel>;
     is_test: boolean;
     budget_current_state_key: string;
     budget_current_state_label: Nullable<string>;
@@ -370,18 +407,15 @@ export type Campaign = {
     who_disbursed_to_moh_at: Nullable<string>; // date
     unicef_disbursed_to_co_at: Nullable<string>; // date
     unicef_disbursed_to_moh_at: Nullable<string>; // date
-    eomg: Nullable<string>; // date
     no_regret_fund_amount: Nullable<number>; // decimal
     payment_mode: Nullable<PaymentMode>;
     district_count: Nullable<number>;
     budget_rrt_oprrt_approval_at: Nullable<string>; // date
-    budget_submitted_at: Nullable<string>; // date
     is_preventive: boolean;
     enable_send_weekly_emails: boolean;
     initial_org_unit: Nullable<number>;
     country: Nullable<number>;
     group: Nullable<number>; // Doesn't appear nullbale in swagger but had anull value in payload
-    last_budget_event: Nullable<number>;
     campaign_types: CampaignType[];
 };
 
@@ -521,7 +555,6 @@ export type PolioCampaignValues = DefaultCampaignValues & {
     cvdpv2_notified_at?: string | null;
     outbreak_declaration_date?: string | null;
     detection_first_draft_submitted_at?: string | null;
-    detection_rrt_oprtt_approval_at?: string | null;
     investigation_at?: string | null;
     risk_assessment_first_draft_submitted_at?: string | null;
     risk_assessment_rrt_oprtt_approval_at?: string | null;
@@ -553,8 +586,6 @@ export type PolioCampaignValues = DefaultCampaignValues & {
     who_disbursed_to_moh_at?: string | null;
     who_disbursed_to_co_at?: string | null;
     spreadsheet_url?: string | null;
-    eomg?: string | null;
-    budget_submitted_at?: string | null;
     district_count?: number;
     no_regret_fund_amount?: number;
     verification_score?: number;

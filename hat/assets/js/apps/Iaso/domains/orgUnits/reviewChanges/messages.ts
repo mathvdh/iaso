@@ -157,6 +157,15 @@ const MESSAGES = defineMessages({
         id: 'iaso.changeRequest.addPartiallyApprovedComment',
         defaultMessage: 'Add comment for the partial approval',
     },
+    confirmAcceptChangeRequest: {
+        id: 'iaso.changeRequest.confirmAcceptChangeRequest',
+        defaultMessage:
+            'You are about to replace the original version (left) with the modified version (right).',
+    },
+    confirmMessage: {
+        id: 'iaso.changeRequest.confirmMessage',
+        defaultMessage: 'Do you confirm those changes?',
+    },
     comment: {
         id: 'iaso.changeRequest.comment',
         defaultMessage: 'Comment',
@@ -180,6 +189,10 @@ const MESSAGES = defineMessages({
     user: {
         id: 'iaso.label.user',
         defaultMessage: 'User',
+    },
+    dataSourceVersionsSynchronization: {
+        id: 'iaso.label.dataSourceVersionsSynchronization',
+        defaultMessage: 'Data Source Versions Synchronization',
     },
     userRoles: {
         defaultMessage: 'User roles',
@@ -220,6 +233,22 @@ const MESSAGES = defineMessages({
     featureDisabled: {
         id: 'iaso.label.featureDisabled',
         defaultMessage: 'Feature temporarily disabled',
+    },
+    showAdvancedSettings: {
+        id: 'iaso.form.label.showAdvancedSettings',
+        defaultMessage: 'Show advanced settings',
+    },
+    hideAdvancedSettings: {
+        id: 'iaso.form.label.hideAdvancedSettings',
+        defaultMessage: 'Hide advanced settings',
+    },
+    source: {
+        defaultMessage: 'Source',
+        id: 'iaso.orgUnits.source',
+    },
+    sourceVersion: {
+        id: 'iaso.form.label.sourceVersion',
+        defaultMessage: 'Source version',
     },
 });
 

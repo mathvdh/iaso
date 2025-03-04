@@ -1,31 +1,34 @@
 from typing import Dict, Tuple
 
 import django_filters
+
 from django.db import models, transaction
-from django.db.models import Count, OuterRef, Prefetch, Subquery, Q
+from django.db.models import Count, OuterRef, Prefetch, Q, Subquery
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse, StreamingHttpResponse
 from django.utils.translation import gettext as _
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import filters, permissions, status
-from rest_framework.exceptions import NotFound
-from rest_framework.response import Response
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from rest_framework.response import Response
+
 from hat.api.export_utils import Echo, generate_xlsx, iter_items
 from hat.audit.audit_mixin import AuditMixin
 from hat.audit.models import PAYMENT_API, PAYMENT_LOT_API
 from hat.menupermissions import models as permission
 from iaso.api.common import DropdownOptionsListViewSet, DropdownOptionsSerializer, HasPermission, ModelViewSet
-from iaso.api.payments.filters import payments_lots as payments_lots_filters
-from iaso.api.payments.filters import potential_payments as potential_payments_filters
-from iaso.api.tasks import TaskSerializer
+from iaso.api.payments.filters import (
+    payments_lots as payments_lots_filters,
+    potential_payments as potential_payments_filters,
+)
+from iaso.api.tasks.serializers import TaskSerializer
 from iaso.models import OrgUnitChangeRequest, Payment, PaymentLot, PotentialPayment
+from iaso.models.org_unit import OrgUnit
 from iaso.models.payments import PaymentStatuses
 from iaso.tasks.create_payment_lot import create_payment_lot
-from rest_framework.exceptions import ValidationError
 from iaso.tasks.payments_bulk_update import mark_payments_as_read
-from django.db import IntegrityError
 
 from .serializers import (
     PaymentAuditLogger,
@@ -271,7 +274,7 @@ class PaymentLotsViewSet(ModelViewSet):
 
             if csv_format:
                 return self.retrieve_to_csv(payment_lot, payments, forms, forms_count_by_payment)
-            elif xlsx_format:
+            if xlsx_format:
                 return self.retrieve_to_xlsx(payment_lot, payments, forms, forms_count_by_payment)
 
         return super().retrieve(request, *args, **kwargs)
@@ -450,11 +453,13 @@ class PotentialPaymentsViewSet(ModelViewSet, AuditMixin):
     def get_queryset(self):
         queryset = (
             PotentialPayment.objects.prefetch_related("change_requests")
+            .prefetch_related("change_requests__org_unit")
             .filter(change_requests__created_by__iaso_profile__account=self.request.user.iaso_profile.account)
             # Filter out potential payments already linked to a task as this means there's a task running converting them into Payment
             .filter(task__isnull=True)
             .distinct()
         )
+
         queryset = queryset.annotate(change_requests_count=Count("change_requests"))
 
         return queryset
@@ -476,19 +481,13 @@ class PotentialPaymentsViewSet(ModelViewSet, AuditMixin):
                 potential_payment__task__isnull=True,
             )
             if change_requests.exists():
-                try:
-                    potential_payment, created = PotentialPayment.objects.get_or_create(
-                        user_id=user["created_by"],
-                    )
-                    for change_request in change_requests:
-                        change_request.potential_payment = potential_payment
-                        change_request.save()
-                    potential_payment.save()
-                # If there was a race condition, we return the existing PotentialPayment
-                except IntegrityError:
-                    return PotentialPayment.objects.get(
-                        user_id=user["created_by"],
-                    )
+                potential_payment, created = PotentialPayment.objects.get_or_create(
+                    user_id=user["created_by"],
+                )
+                for change_request in change_requests:
+                    change_request.potential_payment = potential_payment
+                    change_request.save()
+                potential_payment.save()
 
     @swagger_auto_schema(auto_schema=None)
     def retrieve(self, request, *args, **kwargs):
@@ -579,7 +578,15 @@ class PaymentsViewSet(ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, HasPermission(permission.PAYMENTS)]
 
     def get_queryset(self) -> models.QuerySet:
-        return Payment.objects.filter(created_by__iaso_profile__account=self.request.user.iaso_profile.account)
+        user = self.request.user
+        localisation = user.iaso_profile.org_units
+        queryset = Payment.objects.filter(
+            created_by__iaso_profile__account=self.request.user.iaso_profile.account
+        ).prefetch_related("change_requests__org_unit")
+        if localisation:
+            authorized_org_units = OrgUnit.objects.filter_for_user(user)
+            queryset = queryset.filter(change_requests__org_unit__in=authorized_org_units)
+        return queryset
 
     def update(self, request, *args, **kwargs):
         with transaction.atomic():

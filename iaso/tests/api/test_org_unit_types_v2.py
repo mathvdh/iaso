@@ -134,7 +134,7 @@ class OrgUnitTypesAPITestCase(APITestCase):
         self.data_source_1.projects.set([self.ead, self.esd])
 
         self.client.force_authenticate(self.jane)
-        response = self.client.get("/api/v2/orgunittypes/?order=id")
+        response = self.client.get("/api/v2/orgunittypes/?order=id&with_units_count=true")
         self.assertJSONResponse(response, 200)
 
         response_data = response.json()["orgUnitTypes"]
@@ -154,6 +154,27 @@ class OrgUnitTypesAPITestCase(APITestCase):
         for other_types in response_data[2:]:
             self.assertEqual(other_types["units_count"], 0)
 
+    def test_org_unit_types_list_without_units_count(self):
+        """GET /orgunittypes/ without with_units_count should not include units_count in response"""
+
+        # Create some org units to ensure there would be counts if requested
+        m.OrgUnit.objects.create(
+            name="OU 1 ok",
+            org_unit_type=self.org_unit_type_1,
+            validation_status=m.OrgUnit.VALIDATION_VALID,
+            version=self.version_1,
+        )
+
+        self.client.force_authenticate(self.jane)
+        response = self.client.get("/api/v2/orgunittypes/?order=id")
+        self.assertJSONResponse(response, 200)
+
+        response_data = response.json()["orgUnitTypes"]
+
+        # Verify units_count is not present in any of the returned org unit types
+        for org_unit_type in response_data:
+            self.assertNotIn("units_count", org_unit_type)
+
     def test_org_unit_types_retrieve_without_auth_or_app_id(self):
         """GET /orgunittypes/<org_unit_type_id>/ without auth or app id should result in a 200 empty response"""
 
@@ -172,7 +193,7 @@ class OrgUnitTypesAPITestCase(APITestCase):
         f"""GET /orgunittypes/?{PROJECT}=... happy path"""
 
         self.client.force_authenticate(self.jane)
-        response = self.client.get(f"/api/v2/orgunittypes/", {PROJECT: self.ead.id})
+        response = self.client.get("/api/v2/orgunittypes/", {PROJECT: self.ead.id})
         self.assertJSONResponse(response, 200)
         self.assertValidOrgUnitTypeListData(response.json(), 2)
 
@@ -180,7 +201,7 @@ class OrgUnitTypesAPITestCase(APITestCase):
         f"""GET /orgunittypes/?{PROJECT}=... wrong id"""
 
         self.client.force_authenticate(self.jane)
-        response = self.client.get(f"/api/v2/orgunittypes/", {PROJECT: -1})
+        response = self.client.get("/api/v2/orgunittypes/", {PROJECT: -1})
         self.assertJSONResponse(response, 200)
         self.assertValidOrgUnitTypeListData(response.json(), 0)
 

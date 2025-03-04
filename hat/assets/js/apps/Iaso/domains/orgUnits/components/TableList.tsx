@@ -1,65 +1,52 @@
-import EditIcon from '@mui/icons-material/Settings';
-import { Box } from '@mui/material';
-import {
-    selectionInitialState,
-    setTableSelection,
-    useSafeIntl,
-    useSkipEffectOnMount,
-} from 'bluesquare-components';
 import React, {
     FunctionComponent,
     useCallback,
     useMemo,
     useState,
 } from 'react';
+import EditIcon from '@mui/icons-material/Settings';
+import { Box } from '@mui/material';
+import {
+    selectionInitialState,
+    setTableSelection,
+    useSafeIntl,
+} from 'bluesquare-components';
 
-// COMPONENTS
 import { UseMutateAsyncFunction } from 'react-query';
+
 import { TableWithDeepLink } from '../../../components/tables/TableWithDeepLink';
-import { OrgUnitsMultiActionsDialog } from './OrgUnitsMultiActionsDialog';
-// COMPONENTS
-
-// TYPES
-import { Result as OrgUnitResult } from '../hooks/requests/useGetOrgUnits';
-import { OrgUnit, OrgUnitParams } from '../types/orgUnit';
-import { Search } from '../types/search';
-import { Selection } from '../types/selection';
-// TYPES
-
-// UTILS
-import { decodeSearch } from '../utils';
-// UTILS
-
-// CONSTANTS
 import { baseUrls } from '../../../constants/urls';
-import MESSAGES from '../messages';
-// CONSTANTS
 
-// HOOKS
+import { useQueryUpdateListener } from '../../../hooks/useQueryUpdateListener';
 import { ORG_UNITS } from '../../../utils/permissions';
 import {
     useCheckUserHasWriteTypePermission,
     useCurrentUser,
 } from '../../../utils/usersUtils';
 import { userHasPermission } from '../../users/utils';
+import { Result as OrgUnitResult } from '../hooks/requests/useGetOrgUnits';
 import { useGetOrgUnitsTableColumns } from '../hooks/useGetOrgUnitsTableColumns';
-// HOOKS
+import MESSAGES from '../messages';
+import { OrgUnit, OrgUnitParams } from '../types/orgUnit';
+import { Search } from '../types/search';
+import { Selection } from '../types/selection';
+import { decodeSearch } from '../utils';
+import { OrgUnitsMultiActionsDialog } from './OrgUnitsMultiActionsDialog';
 
 type Props = {
     params: OrgUnitParams;
-    resetPageToOne: string;
-    orgUnitsData: OrgUnitResult;
+    orgUnitsData?: OrgUnitResult;
     saveMulti: UseMutateAsyncFunction<unknown, unknown, unknown, unknown>;
 };
 
 const baseUrl = baseUrls.orgUnits;
 export const TableList: FunctionComponent<Props> = ({
     params,
-    resetPageToOne,
     orgUnitsData,
     saveMulti,
 }) => {
     const { formatMessage } = useSafeIntl();
+
     const currentUser = useCurrentUser();
     const [multiActionPopupOpen, setMultiActionPopupOpen] =
         useState<boolean>(false);
@@ -109,9 +96,12 @@ export const TableList: FunctionComponent<Props> = ({
         [checkUserHasWriteTypePermission],
     );
 
-    useSkipEffectOnMount(() => {
-        handleTableSelection('reset');
-    }, [resetPageToOne]);
+    useQueryUpdateListener({
+        queryKey: 'orgunits',
+        onUpdate: () => {
+            handleTableSelection('reset');
+        },
+    });
 
     return (
         <>
@@ -122,9 +112,8 @@ export const TableList: FunctionComponent<Props> = ({
                 selection={selection}
                 saveMulti={saveMulti}
             />
-            <Box mt={-4}>
+            <Box mt={-4} pb={2}>
                 <TableWithDeepLink
-                    resetPageToOne={resetPageToOne}
                     data={orgUnitsData?.orgunits || []}
                     count={orgUnitsData?.count}
                     pages={orgUnitsData?.pages}
@@ -134,6 +123,7 @@ export const TableList: FunctionComponent<Props> = ({
                     marginTop={false}
                     extraProps={{
                         columns,
+                        data: orgUnitsData?.orgunits || [],
                     }}
                     multiSelect
                     selection={selection}

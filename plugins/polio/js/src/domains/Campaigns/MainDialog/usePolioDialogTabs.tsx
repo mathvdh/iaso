@@ -9,6 +9,7 @@ import {
     EvaluationsForms,
     evaluationFormFields,
 } from '../Evaluations/EvaluationsForms';
+import { useSubActivityTabTooltip } from '../hooks/useSubActivityTabTooltip';
 import { PreparednessForm } from '../Preparedness/PreparednessForm';
 import {
     RiskAssessmentForm,
@@ -16,9 +17,9 @@ import {
 } from '../RiskAssessment/RiskAssessmentForm';
 import { RoundsForm, roundFormFields } from '../Rounds/RoundsForm';
 import { ScopeForm, scopeFormFields } from '../Scope/ScopeForm';
+import { SubActivitiesForm } from '../SubActivities/SubActivitiesForm';
 import { useIsPolioCampaign } from '../hooks/useIsPolioCampaignCheck';
 import { Tab } from './PolioDialogTabs';
-import { SubActivitiesForm } from '../SubActivities/SubActivitiesForm';
 
 export const usePolioDialogTabs = (
     formik: FormikProps<CampaignFormValues>,
@@ -26,7 +27,7 @@ export const usePolioDialogTabs = (
 ): Tab[] => {
     const { formatMessage } = useSafeIntl();
     const isPolio = useIsPolioCampaign(formik.values);
-
+    const subActivityTabTooltip = useSubActivityTabTooltip(formik);
     return useMemo(() => {
         const defaultTabs = [
             {
@@ -55,6 +56,7 @@ export const usePolioDialogTabs = (
                 disabled:
                     !formik.values.initial_org_unit ||
                     formik.values.rounds?.length === 0,
+                disabledMessage: formatMessage(MESSAGES.scopeUnlockConditions),
                 hasTabError: compareArraysValues(
                     scopeFormFields,
                     formik.errors,
@@ -67,7 +69,11 @@ export const usePolioDialogTabs = (
                 key: 'subActivities',
                 disabled:
                     !formik.values.initial_org_unit ||
-                    formik.values.rounds.length === 0,
+                    formik.values.rounds.length === 0 ||
+                    (formik.values.id &&
+                        formik.values.separate_scopes_per_round !==
+                            formik.initialValues.separate_scopes_per_round),
+                disabledMessage: subActivityTabTooltip,
                 hasTabError: false,
             },
         ];
@@ -92,6 +98,7 @@ export const usePolioDialogTabs = (
                     formik.errors,
                 ),
                 key: 'evaluation',
+
             },
             {
                 title: formatMessage(MESSAGES.preparedness),
@@ -107,8 +114,13 @@ export const usePolioDialogTabs = (
     }, [
         formatMessage,
         formik.errors,
-        formik.values,
+        formik.initialValues.separate_scopes_per_round,
+        formik.values.id,
+        formik.values.initial_org_unit,
+        formik.values.rounds.length,
+        formik.values.separate_scopes_per_round,
         isPolio,
         selectedCampaign?.rounds,
+        subActivityTabTooltip,
     ]);
 };

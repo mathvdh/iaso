@@ -1,21 +1,22 @@
 from time import time
-from typing import Optional, List
+from typing import List, Optional
 
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import QuerySet
-from hat.audit.audit_logger import AuditLogger
-from iaso.api.microplanning import AuditTeamSerializer
-from iaso.api.profiles.audit import ProfileAuditLogger
-from iaso.models.microplanning import Team, TeamType
-from rest_framework.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import PermissionDenied
+
 from beanstalk_worker import task_decorator
 from hat.audit import models as audit_models
-from iaso.models import Task, Profile, Project, UserRole, OrgUnit
-from iaso.api.profiles.profiles import get_filtered_profiles
+from hat.audit.audit_logger import AuditLogger
 from hat.menupermissions import models as permission
 from hat.menupermissions.models import CustomPermissionSupport
+from iaso.api.microplanning import AuditTeamSerializer
+from iaso.api.profiles.audit import ProfileAuditLogger
+from iaso.api.profiles.profiles import get_filtered_profiles
+from iaso.models import OrgUnit, Profile, Project, Task, UserRole
+from iaso.models.microplanning import Team, TeamType
 
 
 class TeamAuditLogger(AuditLogger):
@@ -219,6 +220,7 @@ def profiles_bulk_update(
     children_ou: Optional[bool],
     projects: Optional[List[int]],
     user_roles: Optional[List[int]],
+    teams: Optional[List[int]],
     task: Task,
 ):
     """Background Task to bulk update profiles."""
@@ -250,12 +252,12 @@ def profiles_bulk_update(
             children_ou=children_ou,
             projects=projects,
             user_roles=user_roles,
+            teams=teams,
             managed_users_only=True,
         )
 
     if not queryset:
         raise Exception("No matching profile found")
-
     total = queryset.count()
 
     # FIXME Task don't handle rollback properly if task is killed by user or other error
